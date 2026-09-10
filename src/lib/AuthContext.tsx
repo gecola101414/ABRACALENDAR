@@ -6,20 +6,36 @@ interface AuthContextType {
   user: User | null;
   loading: boolean;
   isAdmin: boolean;
+  isAdminAuthenticated: boolean;
+  verifyAdminPassword: (pass: string) => boolean;
   isAnonymous: boolean;
   ownerId: string;
 }
 
-const AuthContext = createContext<AuthContextType>({ user: null, loading: true, isAdmin: false, isAnonymous: false });
+const AuthContext = createContext<AuthContextType>({ 
+  user: null, 
+  loading: true, 
+  isAdmin: false, 
+  isAdminAuthenticated: false,
+  verifyAdminPassword: () => false,
+  isAnonymous: false,
+  ownerId: ''
+});
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const [ownerId, setOwnerId] = useState<string>('');
+  const [isAdminAuthenticated, setIsAdminAuthenticated] = useState(false);
 
   const ADMIN_EMAIL = 'gecolakey@gmail.com';
+  const ADMIN_PASS = '123456';
 
   useEffect(() => {
+    // Check if previously authenticated as admin in this session
+    const isAuth = sessionStorage.getItem('admin_authenticated') === 'true';
+    setIsAdminAuthenticated(isAuth);
+    
     // Generate or retrieve a persistent browser ID as fallback
     let deviceId = localStorage.getItem('abracadabra_device_id');
     if (!deviceId) {
@@ -31,15 +47,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       if (!currentUser) {
         try {
-          // Attempt anonymous sign-in, but handle it silently if it fails
-          // (e.g. if not enabled in Firebase Console)
           const cred = await signInAnonymously(auth);
           if (cred.user) {
             setOwnerId(cred.user.uid);
             setUser(cred.user);
           }
         } catch (error: any) {
-          // Silent fallback: we already have deviceId set as ownerId in line 29
           if (error.code !== 'auth/admin-restricted-operation') {
             console.warn("Firebase Auth Note:", error.message);
           }
@@ -55,11 +68,28 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return unsubscribe;
   }, []);
 
-  const isAdmin = user?.email === ADMIN_EMAIL && user?.emailVerified;
+  const isAdmin = user?.email === ADMIN_EMAIL;
   const isAnonymous = user?.isAnonymous ?? false;
 
+  const verifyAdminPassword = (pass: string) => {
+    if (pass === ADMIN_PASS) {
+      setIsAdminAuthenticated(true);
+      sessionStorage.setItem('admin_authenticated', 'true');
+      return true;
+    }
+    return false;
+  };
+
   return (
-    <AuthContext.Provider value={{ user, loading, isAdmin, isAnonymous, ownerId }}>
+    <AuthContext.Provider value={{ 
+      user, 
+      loading, 
+      isAdmin, 
+      isAdminAuthenticated: isAdmin && isAdminAuthenticated,
+      verifyAdminPassword,
+      isAnonymous, 
+      ownerId 
+    }}>
       {children}
     </AuthContext.Provider>
   );

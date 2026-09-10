@@ -72,7 +72,8 @@ export const DayDetailModal: React.FC<DayDetailModalProps> = ({ date, bookings, 
         date: dateStr,
         notes: formData.notes,
         ownerUid: ownerId,
-        createdAt: serverTimestamp()
+        createdAt: serverTimestamp(),
+        status: 'pending'
       };
 
       const privateData = {
@@ -169,6 +170,16 @@ export const DayDetailModal: React.FC<DayDetailModalProps> = ({ date, bookings, 
                             <span className="text-[10px] font-black text-gray-800 truncate">
                               {isOwner ? booking.childName : "OCCUPATA"}
                             </span>
+                            {isOwner && (
+                              <span className={cn(
+                                "text-[7px] font-black px-1 rounded-sm mt-0.5 w-fit",
+                                booking.status === 'confirmed' 
+                                  ? "bg-green-100 text-green-700" 
+                                  : "bg-amber-100 text-amber-700"
+                              )}>
+                                {booking.status === 'confirmed' ? "CONFERMATA" : "IN ATTESA"}
+                              </span>
+                            )}
                           </div>
                         ) : (
                           <span className={cn(
@@ -260,6 +271,17 @@ export const DayDetailModal: React.FC<DayDetailModalProps> = ({ date, bookings, 
                     </button>
                   </div>
                 </form>
+
+                <div className="flex gap-4 mt-6 pt-4 border-t border-purple-100">
+                  <div className="flex items-center gap-1.5">
+                    <div className="w-2 h-2 rounded-full bg-green-500" />
+                    <span className="text-[9px] font-black text-gray-500 uppercase tracking-tighter">Confermata dall'amministratore</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <div className="w-2 h-2 rounded-full bg-amber-500" />
+                    <span className="text-[9px] font-black text-gray-500 uppercase tracking-tighter">In attesa di verifica</span>
+                  </div>
+                </div>
               </div>
             </motion.div>
           )}

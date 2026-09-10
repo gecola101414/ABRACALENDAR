@@ -14,6 +14,7 @@ export interface Booking {
   notes?: string;
   ownerUid?: string;
   createdAt: any;
+  status: 'pending' | 'confirmed';
 }
 
 export interface BookingWithContact extends Booking {
