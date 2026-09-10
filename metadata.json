@@ -1,0 +1,6 @@
+{
+  "name": "Abracadabra Ludoteca",
+  "description": "Gestione prenotazioni sale compleanni per la ludoteca Abracadabra con calendario condiviso e dashboard amministratore.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
