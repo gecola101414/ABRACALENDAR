@@ -19,11 +19,11 @@ import { useAuth } from '../lib/AuthContext';
 import { cn } from '../lib/utils';
 
 interface CalendarProps {
-  onSlotDoubleClick: (date: Date, room: Room, slot: Slot) => void;
+  onSlotClick: (date: Date, room: Room, slot: Slot, booking?: Booking) => void;
 }
 
-export const Calendar: React.FC<CalendarProps> = ({ onSlotDoubleClick }) => {
-  const { user, ownerId } = useAuth();
+export const Calendar: React.FC<CalendarProps> = ({ onSlotClick }) => {
+  const { user, ownerId, isAdmin } = useAuth();
   const [currentDate, setCurrentDate] = useState(new Date());
   const [bookings, setBookings] = useState<Booking[]>([]);
 
@@ -45,7 +45,7 @@ export const Calendar: React.FC<CalendarProps> = ({ onSlotDoubleClick }) => {
 
   return (
     <div className="bg-white rounded-3xl shadow-xl border border-gray-100 overflow-hidden flex flex-col">
-      {/* Header - Compact */}
+      {/* Header */}
       <div className="p-4 bg-white border-b flex flex-col md:flex-row justify-between items-center gap-2">
         <div className="flex items-center gap-3">
           <div className="p-2 bg-purple-100 rounded-xl text-purple-600">
@@ -57,12 +57,16 @@ export const Calendar: React.FC<CalendarProps> = ({ onSlotDoubleClick }) => {
             </h2>
             <div className="flex items-center gap-2 text-xs text-gray-500 font-medium">
               <Sparkles className="w-3 h-3 text-purple-400" />
-              <span>Doppio clic per prenotare</span>
+              <span>
+                {isAdmin 
+                  ? "👑 Vista Amministratore attiva: clicca su una prenotazione per aprire la scheda festa" 
+                  : "Clicca su uno slot per visualizzare i dettagli o prenotare"}
+              </span>
             </div>
           </div>
         </div>
         <div className="flex bg-gray-100 p-1 rounded-xl gap-1 scale-90 md:scale-100">
-          <button onClick={prevWeek} className="p-1.5 hover:bg-white rounded-lg transition-all hover:shadow-sm">
+          <button onClick={prevWeek} className="p-1.5 hover:bg-white rounded-lg transition-all hover:shadow-sm" title="Settimana precedente">
             <ChevronLeft className="w-5 h-5 text-gray-600" />
           </button>
           <button 
@@ -71,7 +75,7 @@ export const Calendar: React.FC<CalendarProps> = ({ onSlotDoubleClick }) => {
           >
             Oggi
           </button>
-          <button onClick={nextWeek} className="p-1.5 hover:bg-white rounded-lg transition-all hover:shadow-sm">
+          <button onClick={nextWeek} className="p-1.5 hover:bg-white rounded-lg transition-all hover:shadow-sm" title="Settimana successiva">
             <ChevronRight className="w-5 h-5 text-gray-600" />
           </button>
         </div>
@@ -139,43 +143,80 @@ export const Calendar: React.FC<CalendarProps> = ({ onSlotDoubleClick }) => {
                         {SLOTS.map(slot => {
                           const booking = dayBookings.find(b => b.slot === slot);
                           const isOwner = booking?.ownerUid === ownerId;
+                          const canSeeDetails = isAdmin || isOwner;
+                          const isConfirmed = booking?.status === 'confirmed';
                           
                           return (
                             <motion.div
                               key={slot}
-                              whileHover={{ scale: booking ? 1 : 1.02 }}
-                              onDoubleClick={() => !booking && onSlotDoubleClick(day, room, slot)}
-                              className={cn(
-                                "py-1.5 px-2 rounded-lg border transition-all select-none cursor-pointer text-center",
+                              whileHover={{ scale: 1.02 }}
+                              whileTap={{ scale: 0.98 }}
+                              onClick={() => onSlotClick(day, room, slot, booking)}
+                              title={
                                 booking 
-                                  ? isOwner
-                                    ? "bg-amber-100 border-amber-400 shadow-sm z-10 relative"
-                                    : "bg-gray-100 border-gray-200 opacity-60 cursor-default" 
-                                  : "bg-white border-dashed border-gray-200 hover:border-purple-400 hover:shadow-sm hover:z-10 relative group/slot"
+                                  ? (canSeeDetails ? `Clicca per aprire la scheda di ${booking.childName}` : "Slot occupato - Clicca per visualizzare")
+                                  : "Slot libero - Clicca per prenotare"
+                              }
+                              className={cn(
+                                "py-2 px-2 rounded-xl border transition-all select-none cursor-pointer text-center relative",
+                                booking 
+                                  ? isAdmin
+                                    ? isConfirmed
+                                      ? "bg-gradient-to-br from-amber-50 to-orange-50/60 border-amber-300 shadow-sm text-gray-900 ring-1 ring-amber-200 hover:shadow-md"
+                                      : "bg-purple-50/80 border-purple-200 shadow-sm text-purple-950 hover:border-purple-400 hover:shadow-md"
+                                    : isOwner
+                                      ? "bg-amber-100 border-amber-400 shadow-sm z-10"
+                                      : "bg-gray-100 border-gray-200 text-gray-600 hover:border-gray-300" 
+                                  : "bg-white border-dashed border-gray-200 hover:border-purple-400 hover:bg-purple-50/30 hover:shadow-sm group/slot"
                               )}
                             >
-                              <div className="flex flex-col items-center justify-center min-h-[32px]">
+                              <div className="flex flex-col items-center justify-center min-h-[36px]">
                                 <span className={cn(
-                                  "text-[8px] font-bold uppercase tracking-tighter",
-                                  booking ? isOwner ? "text-amber-800" : "text-gray-400" : "text-gray-400 group-hover/slot:text-purple-500"
+                                  "text-[8px] font-black uppercase tracking-widest",
+                                  booking 
+                                    ? (isAdmin ? (isConfirmed ? "text-amber-800" : "text-purple-700") : isOwner ? "text-amber-800" : "text-gray-400")
+                                    : "text-gray-400 group-hover/slot:text-purple-600"
                                 )}>
-                                  {SLOT_LABELS[slot].charAt(0)}
+                                  {SLOT_LABELS[slot]}
                                 </span>
+
                                 {booking ? (
-                                  <div className="flex items-center justify-center gap-0.5 w-full">
-                                    {booking.status === 'confirmed' && (
-                                      <span className="text-xs shrink-0 animate-bounce" title="Festa Confermata!">🎂</span>
+                                  <div className="flex flex-col items-center justify-center gap-0.5 w-full mt-0.5">
+                                    <div className="flex items-center justify-center gap-1 w-full px-0.5">
+                                      {isConfirmed && (
+                                        <span className="text-xs shrink-0 animate-bounce" title="Festa Confermata!">🎂</span>
+                                      )}
+                                      <span className={cn(
+                                        "text-[10px] font-black uppercase tracking-tight truncate max-w-[95px]",
+                                        isAdmin 
+                                          ? isConfirmed ? "text-amber-950 font-black" : "text-purple-900" 
+                                          : isOwner ? "text-amber-900" : "text-gray-700"
+                                      )}>
+                                        {canSeeDetails ? (
+                                          <>
+                                            {booking.childName}
+                                            {booking.childAge ? ` (${booking.childAge}a)` : ''}
+                                          </>
+                                        ) : (
+                                          "OCCUPATA"
+                                        )}
+                                      </span>
+                                    </div>
+
+                                    {isAdmin && (
+                                      <span className={cn(
+                                        "text-[7px] font-black px-1.5 py-0.2 rounded-full uppercase tracking-tighter mt-0.5",
+                                        isConfirmed 
+                                          ? "bg-amber-200 text-amber-900" 
+                                          : "bg-purple-200 text-purple-800"
+                                      )}>
+                                        {isConfirmed ? "CONFERMATA 🎂" : "IN ATTESA ⏳"}
+                                      </span>
                                     )}
-                                    <span className={cn(
-                                      "text-[10px] font-black truncate px-0.5",
-                                      isOwner ? "text-amber-900" : "text-gray-700"
-                                    )}>
-                                      {isOwner ? booking.childName : "OCCUPATA"}
-                                    </span>
                                   </div>
                                 ) : (
-                                  <span className="text-[9px] font-black text-gray-200 group-hover/slot:text-purple-300">
-                                    LIBERO
+                                  <span className="text-[9px] font-black text-gray-300 group-hover/slot:text-purple-500 mt-0.5">
+                                    + PRENOTA
                                   </span>
                                 )}
                               </div>
@@ -192,22 +233,30 @@ export const Calendar: React.FC<CalendarProps> = ({ onSlotDoubleClick }) => {
         </table>
       </div>
 
-      <div className="px-4 py-2 bg-gray-50 border-t flex flex-wrap gap-4 text-[9px] font-bold text-gray-500 uppercase tracking-widest items-center">
+      {/* Legend */}
+      <div className="px-4 py-2.5 bg-gray-50 border-t flex flex-wrap gap-4 text-[9px] font-bold text-gray-500 uppercase tracking-widest items-center">
         <div className="flex items-center gap-1.5">
           <div className="w-2.5 h-2.5 rounded bg-white border border-dashed border-gray-300" />
           <span>Libero</span>
         </div>
-        <div className="flex items-center gap-1.5">
-          <div className="w-2.5 h-2.5 rounded bg-amber-100 border border-amber-400" />
-          <span>Tua Prenotazione</span>
-        </div>
+        {isAdmin ? (
+          <div className="flex items-center gap-1.5 text-purple-800 font-black">
+            <div className="w-2.5 h-2.5 rounded bg-purple-100 border border-purple-400" />
+            <span>Prenotazione (Nome Visibile)</span>
+          </div>
+        ) : (
+          <div className="flex items-center gap-1.5">
+            <div className="w-2.5 h-2.5 rounded bg-amber-100 border border-amber-400" />
+            <span>Tua Prenotazione</span>
+          </div>
+        )}
         <div className="flex items-center gap-1.5">
           <div className="w-2.5 h-2.5 rounded bg-gray-200 border border-gray-300" />
           <span>Occupata</span>
         </div>
         <div className="flex items-center gap-1.5 ml-auto text-amber-700 font-black">
           <span className="text-xs">🎂</span>
-          <span>Festa Confermata dall'Amministratore</span>
+          <span>Festa Confermata (Torta Magica)</span>
         </div>
       </div>
     </div>

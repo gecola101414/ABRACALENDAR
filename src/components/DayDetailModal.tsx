@@ -1,11 +1,14 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { format } from 'date-fns';
 import { it } from 'date-fns/locale';
-import { X, CheckCircle2, AlertCircle, Phone, Baby, Calendar as CalIcon, Clock, Wand2, FileText, Info, Sparkles } from 'lucide-react';
+import { 
+  X, CheckCircle2, AlertCircle, Phone, Baby, Calendar as CalIcon, 
+  Clock, Wand2, FileText, Info, Sparkles, Trash2, MessageCircle, ShieldCheck
+} from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ROOMS, SLOTS, Booking, Slot, Room, ROOM_COLORS, SLOT_LABELS } from '../types';
 import { db } from '../lib/firebase';
-import { doc, writeBatch, serverTimestamp, collection, getDocs } from 'firebase/firestore';
+import { doc, writeBatch, serverTimestamp, collection, getDocs, updateDoc, deleteDoc } from 'firebase/firestore';
 import { useAuth } from '../lib/AuthContext';
 import { cn } from '../lib/utils';
 import { BirthdayCakeSymbol } from './BirthdayCakeSymbol';
@@ -16,34 +19,47 @@ interface DayDetailModalProps {
   bookings: Booking[];
   onClose: () => void;
   initialSlot?: { room: Room, slot: Slot };
+  initialBooking?: Booking;
 }
 
-const DayDetailModalInner: React.FC<DayDetailModalProps> = ({ date, bookings, onClose, initialSlot }) => {
+const DayDetailModalInner: React.FC<DayDetailModalProps> = ({ 
+  date, 
+  bookings, 
+  onClose, 
+  initialSlot,
+  initialBooking 
+}) => {
   const { isAdmin, user, ownerId } = useAuth();
   const [selectedSlot, setSelectedSlot] = useState<{ room: Room, slot: Slot } | null>(initialSlot || null);
+  const [activeBookingId, setActiveBookingId] = useState<string | null>(initialBooking?.id || null);
   const [formData, setFormData] = useState({ childName: '', childAge: '', parentPhone: '', notes: '' });
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [actionLoading, setActionLoading] = useState(false);
   const [contactDetails, setContactDetails] = useState<Record<string, { parentPhone: string }>>({});
 
   const dateStr = format(date, 'yyyy-MM-dd');
+
+  // Find booking for the currently selected slot or active booking
+  const currentSlotBooking = bookings.find(b => 
+    (activeBookingId && b.id === activeBookingId) ||
+    (selectedSlot && b.date === dateStr && b.room === selectedSlot.room && b.slot === selectedSlot.slot)
+  );
 
   const fetchContacts = async () => {
     const contactsMap: Record<string, { parentPhone: string }> = {};
     const relevantBookings = bookings.filter(b => b.date === dateStr);
     
     for (const booking of relevantBookings) {
-      // Admin can see all, Owner can see their own (if authenticated)
       const isOwner = booking.ownerUid === ownerId;
-      // We only fetch contacts from subcollection if user is Admin or authenticated Owner
-      if (isAdmin || (isOwner && user)) {
+      if (isAdmin || (isOwner && user) || isOwner) {
         if (booking.id) {
           try {
             const contactSnap = await getDocs(collection(db, 'bookings', booking.id, 'contacts'));
-            contactSnap.forEach(doc => {
-              contactsMap[booking.id!] = doc.data() as { parentPhone: string };
+            contactSnap.forEach(cDoc => {
+              contactsMap[booking.id!] = cDoc.data() as { parentPhone: string };
             });
           } catch (e) {
-            // This is expected if auth is off or not the owner
+            // Safe fallback
           }
         }
       }
@@ -51,7 +67,7 @@ const DayDetailModalInner: React.FC<DayDetailModalProps> = ({ date, bookings, on
     setContactDetails(contactsMap);
   };
 
-  React.useEffect(() => {
+  useEffect(() => {
     fetchContacts();
   }, [bookings, user, isAdmin, ownerId]);
 
@@ -75,7 +91,7 @@ const DayDetailModalInner: React.FC<DayDetailModalProps> = ({ date, bookings, on
         notes: formData.notes,
         ownerUid: ownerId,
         createdAt: serverTimestamp(),
-        status: 'pending'
+        status: isAdmin ? 'confirmed' : 'pending' // Admin auto-confirms if creating
       };
 
       const privateData = {
@@ -95,8 +111,41 @@ const DayDetailModalInner: React.FC<DayDetailModalProps> = ({ date, bookings, on
     }
   };
 
+  const handleToggleConfirm = async (booking: Booking) => {
+    if (!booking.id) return;
+    setActionLoading(true);
+    const newStatus = booking.status === 'confirmed' ? 'pending' : 'confirmed';
+    try {
+      await updateDoc(doc(db, 'bookings', booking.id), {
+        status: newStatus
+      });
+    } catch (err) {
+      console.error("Toggle error:", err);
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleDeleteBooking = async (booking: Booking) => {
+    if (!booking.id) return;
+    if (window.confirm(`Sei sicuro di voler eliminare la prenotazione per ${booking.childName?.toUpperCase()}?`)) {
+      setActionLoading(true);
+      try {
+        await deleteDoc(doc(db, 'bookings', booking.id));
+        setActiveBookingId(null);
+        setSelectedSlot(null);
+      } catch (err) {
+        console.error("Delete error:", err);
+      } finally {
+        setActionLoading(false);
+      }
+    }
+  };
+
+  const activeParentPhone = currentSlotBooking?.id ? contactDetails[currentSlotBooking.id]?.parentPhone : '';
+
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 sm:p-6">
+    <div className="fixed inset-0 z-[60] flex items-center justify-center p-3 sm:p-6">
       <motion.div 
         initial={{ opacity: 0 }} 
         animate={{ opacity: 1 }} 
@@ -109,189 +158,333 @@ const DayDetailModalInner: React.FC<DayDetailModalProps> = ({ date, bookings, on
         initial={{ scale: 0.9, opacity: 0, y: 20 }}
         animate={{ scale: 1, opacity: 1, y: 0 }}
         exit={{ scale: 0.9, opacity: 0, y: 20 }}
-        className="bg-white w-full max-w-4xl rounded-3xl shadow-2xl overflow-hidden relative z-10 flex flex-col max-h-[90vh]"
+        className="bg-white w-full max-w-4xl rounded-[2.5rem] shadow-2xl overflow-hidden relative z-10 flex flex-col max-h-[92vh] border border-gray-100"
       >
-        {/* Header - Compact */}
-        <div className="p-4 bg-gray-50 border-b flex justify-between items-center shrink-0">
-          <div>
-            <h3 className="text-xl font-black text-gray-900 flex items-center gap-2">
-              <CalIcon className="text-purple-600 w-5 h-5" />
-              {format(date, 'EEEE d MMMM yyyy', { locale: it })}
-            </h3>
-            <p className="text-[10px] text-gray-500 font-medium">Stato delle sale e prenotazioni</p>
+        {/* Modal Header */}
+        <div className="p-4 sm:p-5 bg-gradient-to-r from-purple-900 via-indigo-900 to-purple-800 text-white flex justify-between items-center shrink-0">
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 bg-white/10 rounded-2xl backdrop-blur-md">
+              <CalIcon className="text-amber-400 w-6 h-6" />
+            </div>
+            <div>
+              <h3 className="text-lg sm:text-xl font-black capitalize leading-tight">
+                {format(date, 'EEEE d MMMM yyyy', { locale: it })}
+              </h3>
+              <p className="text-xs text-purple-200 font-bold">
+                {isAdmin ? "Pannello Dettaglio & Schede Prenotazioni" : "Stato Sale & Prenotazione Festa"}
+              </p>
+            </div>
           </div>
-          <button onClick={onClose} className="p-1.5 hover:bg-gray-200 rounded-full transition-colors">
-            <X className="w-5 h-5" />
+          <button 
+            onClick={onClose} 
+            className="p-2 hover:bg-white/20 rounded-full transition-colors active:scale-95 text-white"
+          >
+            <X className="w-6 h-6" />
           </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-4 space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-            {ROOMS.map(room => (
-              <div key={room} className="space-y-2">
-                <div className={cn(
-                  "p-2 rounded-xl border text-center text-[10px] font-black shadow-sm",
-                  ROOM_COLORS[room]
-                )}>
-                  {room.replace('SALA ', '')}
-                </div>
-                <div className="space-y-2">
-                  {SLOTS.map(slot => {
-                    const booking = bookings.find(b => b.date === dateStr && b.room === room && b.slot === slot);
-                    const isSelected = selectedSlot?.room === room && selectedSlot?.slot === slot;
-                    const isOwner = booking?.ownerUid === ownerId;
-                    const canSeeDetails = isAdmin || isOwner;
+        <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-6">
+          {/* Room & Slot Selector Cards */}
+          <div>
+            <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest block mb-2 px-1">
+              Seleziona una sala o clicca su una prenotazione:
+            </span>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              {ROOMS.map(room => (
+                <div key={room} className="space-y-2 bg-gray-50/60 p-2.5 rounded-2xl border border-gray-100">
+                  <div className={cn(
+                    "p-2 rounded-xl border text-center text-[10px] font-black shadow-sm tracking-wide",
+                    ROOM_COLORS[room]
+                  )}>
+                    {room.replace('SALA ', '')}
+                  </div>
+                  <div className="space-y-1.5">
+                    {SLOTS.map(slot => {
+                      const booking = bookings.find(b => b.date === dateStr && b.room === room && b.slot === slot);
+                      const isSelected = selectedSlot?.room === room && selectedSlot?.slot === slot;
+                      const isOwner = booking?.ownerUid === ownerId;
+                      const canSeeDetails = isAdmin || isOwner;
+                      const isConfirmed = booking?.status === 'confirmed';
 
-                    return (
-                      <button
-                        key={slot}
-                        disabled={!!booking && !isAdmin}
-                        onClick={() => !booking && setSelectedSlot({ room, slot })}
-                        className={cn(
-                          "w-full p-2.5 rounded-lg border-2 transition-all flex flex-col gap-0.5 text-left relative overflow-hidden group",
-                          booking
-                            ? isOwner
-                              ? "bg-amber-50 border-amber-400"
-                              : "bg-gray-50 border-gray-100 opacity-60"
-                            : isSelected
-                              ? "bg-purple-600 border-purple-600 text-white shadow-md ring-2 ring-purple-100"
-                              : "bg-white border-dashed border-gray-200 hover:border-purple-300"
-                        )}
-                      >
-                        <div className="flex justify-between items-center w-full">
-                          <span className={cn(
-                            "text-[8px] font-bold uppercase tracking-widest",
-                            booking ? "text-gray-400" : isSelected ? "text-purple-100" : "text-gray-400"
-                          )}>
-                            {SLOT_LABELS[slot]}
-                          </span>
-                        </div>
-                        
-                        {booking ? (
-                          <div className="flex flex-col gap-0.5">
-                            <span className="text-[10px] font-black text-gray-800 truncate">
-                              {isOwner ? booking.childName : "OCCUPATA"}
+                      return (
+                        <button
+                          key={slot}
+                          onClick={() => {
+                            setSelectedSlot({ room, slot });
+                            if (booking?.id) {
+                              setActiveBookingId(booking.id);
+                            } else {
+                              setActiveBookingId(null);
+                            }
+                          }}
+                          className={cn(
+                            "w-full p-2.5 rounded-xl border-2 transition-all flex flex-col gap-0.5 text-left relative overflow-hidden group",
+                            isSelected
+                              ? "ring-2 ring-purple-600 border-purple-600 bg-purple-50 shadow-md"
+                              : booking
+                                ? isConfirmed
+                                  ? "bg-amber-50/80 border-amber-300 hover:border-amber-400"
+                                  : "bg-purple-50/50 border-purple-200 hover:border-purple-300"
+                                : "bg-white border-dashed border-gray-200 hover:border-purple-300"
+                          )}
+                        >
+                          <div className="flex justify-between items-center w-full">
+                            <span className="text-[8px] font-black uppercase tracking-widest text-gray-400">
+                              {SLOT_LABELS[slot]}
                             </span>
-                            {booking.status === 'confirmed' ? (
-                              <div className="mt-0.5">
-                                <BirthdayCakeSymbol size="sm" showLabel={isOwner} animated={true} />
-                              </div>
-                            ) : isOwner ? (
-                              <span className="text-[7px] font-black px-1 py-0.2 bg-amber-100 text-amber-800 rounded-sm w-fit border border-amber-200">
-                                IN ATTESA DI CONFERMA
-                              </span>
-                            ) : null}
+                            {isConfirmed && <span className="text-xs">🎂</span>}
                           </div>
-                        ) : (
-                          <span className={cn(
-                            "text-[10px] font-bold",
-                            isSelected ? "text-white" : "text-gray-300"
-                          )}>
-                            {isSelected ? "Selezionata" : "Libera"}
-                          </span>
-                        )}
-                      </button>
-                    );
-                  })}
+                          
+                          {booking ? (
+                            <div className="flex flex-col gap-0.5 mt-0.5">
+                              <span className={cn(
+                                "text-xs font-black truncate",
+                                canSeeDetails ? "text-gray-900 uppercase" : "text-gray-500 font-bold"
+                              )}>
+                                {canSeeDetails ? (
+                                  <>
+                                    {booking.childName} {booking.childAge ? `(${booking.childAge}a)` : ''}
+                                  </>
+                                ) : "OCCUPATA"}
+                              </span>
+                              <span className={cn(
+                                "text-[8px] font-black px-1.5 py-0.5 rounded-md w-fit uppercase",
+                                isConfirmed 
+                                  ? "bg-amber-200 text-amber-900 font-black" 
+                                  : "bg-purple-100 text-purple-800"
+                              )}>
+                                {isConfirmed ? "CONFERMATA 🎂" : "IN ATTESA ⏳"}
+                              </span>
+                            </div>
+                          ) : (
+                            <span className="text-[10px] font-black text-purple-400 group-hover:text-purple-600 mt-0.5">
+                              + DISPONIBILE
+                            </span>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
-              </div>
-            ))}
+              ))}
+            </div>
           </div>
 
-          {/* Booking Form (Conditional) */}
-          {selectedSlot && !isAdmin && (
+          {/* ACTIVE VIEW: SCHEDA PRENOTAZIONE (If slot has booking) */}
+          {currentSlotBooking ? (
+            <motion.div
+              initial={{ opacity: 0, y: 15 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="bg-gradient-to-br from-purple-50 via-white to-amber-50/40 rounded-3xl p-6 sm:p-8 border-2 border-purple-200 shadow-xl relative overflow-hidden"
+            >
+              {/* Confirmed Top Ribbon */}
+              {currentSlotBooking.status === 'confirmed' && (
+                <div className="absolute top-0 right-0 left-0 h-2 bg-gradient-to-r from-amber-400 via-orange-400 to-pink-500" />
+              )}
+
+              <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 pb-6 border-b border-purple-100">
+                <div className="flex items-center gap-4">
+                  <div className={cn(
+                    "w-16 h-16 rounded-2xl flex items-center justify-center font-black shadow-inner",
+                    ROOM_COLORS[currentSlotBooking.room]
+                  )}>
+                    <Baby className="w-8 h-8" />
+                  </div>
+
+                  <div>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <h4 className="text-2xl sm:text-3xl font-black text-gray-900 uppercase tracking-tight">
+                        {isAdmin || currentSlotBooking.ownerUid === ownerId ? currentSlotBooking.childName : 'Festa di Compleanno'}
+                      </h4>
+                      {currentSlotBooking.childAge && (
+                        <span className="px-3 py-1 bg-purple-600 text-white rounded-xl text-xs font-black shadow-sm">
+                          {currentSlotBooking.childAge} ANNI
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-xs font-bold text-gray-500 mt-0.5">
+                      {currentSlotBooking.room} • {SLOT_LABELS[currentSlotBooking.slot]}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Status Indicator */}
+                <div>
+                  {currentSlotBooking.status === 'confirmed' ? (
+                    <BirthdayCakeSymbol size="lg" animated={true} />
+                  ) : (
+                    <div className="inline-flex items-center gap-1.5 px-4 py-2 rounded-2xl bg-amber-100 text-amber-900 border border-amber-300 text-xs font-black">
+                      <Clock className="w-4 h-4 text-amber-600" />
+                      <span>IN ATTESA DI CONFERMA</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Booking Details Grid */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 my-6">
+                {/* Contact Phone (for Admin or Owner) */}
+                <div className="p-4 bg-white rounded-2xl border border-purple-100 shadow-sm">
+                  <span className="text-[10px] font-black uppercase text-purple-600 block mb-1">
+                    Recapito Genitore
+                  </span>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2 text-gray-900 font-black text-base">
+                      <Phone className="w-4 h-4 text-purple-600 shrink-0" />
+                      <span>{activeParentPhone || 'Recapito non inserito / riservato'}</span>
+                    </div>
+
+                    {activeParentPhone && (
+                      <div className="flex gap-2">
+                        <a
+                          href={`tel:${activeParentPhone}`}
+                          className="p-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl transition-all shadow-sm active:scale-95"
+                          title="Chiama ora"
+                        >
+                          <Phone className="w-4 h-4" />
+                        </a>
+                        <a
+                          href={`https://wa.me/${activeParentPhone.replace(/[^0-9]/g, '')}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="p-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl transition-all shadow-sm active:scale-95"
+                          title="Scrivi su WhatsApp"
+                        >
+                          <MessageCircle className="w-4 h-4" />
+                        </a>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Notes */}
+                <div className="p-4 bg-white rounded-2xl border border-purple-100 shadow-sm">
+                  <span className="text-[10px] font-black uppercase text-purple-600 block mb-1">
+                    Note & Richieste Speciali
+                  </span>
+                  <p className="text-xs font-bold text-gray-700">
+                    {currentSlotBooking.notes ? `"${currentSlotBooking.notes}"` : <span className="text-gray-400 italic">Nessuna nota specificata</span>}
+                  </p>
+                </div>
+              </div>
+
+              {/* Admin Action Bar */}
+              {isAdmin && (
+                <div className="pt-4 border-t border-purple-100 flex flex-col sm:flex-row gap-3">
+                  <button
+                    disabled={actionLoading}
+                    onClick={() => handleToggleConfirm(currentSlotBooking)}
+                    className={cn(
+                      "flex-1 py-3.5 px-6 rounded-2xl font-black text-sm flex items-center justify-center gap-2 transition-all shadow-lg active:scale-[0.98]",
+                      currentSlotBooking.status === 'confirmed'
+                        ? "bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300"
+                        : "bg-gradient-to-r from-amber-400 via-orange-500 to-pink-500 hover:from-amber-500 hover:to-pink-600 text-white shadow-orange-500/25"
+                    )}
+                  >
+                    {currentSlotBooking.status === 'confirmed' ? (
+                      <>
+                        <Clock className="w-4 h-4 text-amber-800" />
+                        <span>Ripristina a "In Attesa"</span>
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles className="w-4 h-4 text-yellow-200" />
+                        <span>CONFERMA PRENOTAZIONE (Torta 🎂🕯️)</span>
+                      </>
+                    )}
+                  </button>
+
+                  <button
+                    disabled={actionLoading}
+                    onClick={() => handleDeleteBooking(currentSlotBooking)}
+                    className="py-3.5 px-4 bg-red-50 hover:bg-red-100 text-red-600 rounded-2xl font-black text-xs flex items-center justify-center gap-1.5 transition-all border border-red-200 active:scale-95"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                    <span>Elimina</span>
+                  </button>
+                </div>
+              )}
+            </motion.div>
+          ) : selectedSlot ? (
+            /* BOOKING FORM FOR FREE SLOT */
             <motion.div 
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
-              className="bg-purple-50 rounded-2xl p-4 border-2 border-purple-100 relative overflow-hidden"
+              className="bg-purple-50/80 rounded-3xl p-6 sm:p-8 border-2 border-purple-200 relative overflow-hidden"
             >
               <div className="relative z-10">
-                <div className="mb-4">
-                  <h4 className="text-xl font-black text-purple-900 flex items-center gap-2">
-                    <Wand2 className="w-5 h-5" />
+                <div className="mb-5">
+                  <h4 className="text-2xl font-black text-purple-900 flex items-center gap-2">
+                    <Wand2 className="w-6 h-6 text-purple-600" />
                     Prenota la tua festa!
                   </h4>
-                  <p className="text-[10px] text-purple-700 font-bold uppercase tracking-wider mt-0.5">
+                  <p className="text-xs text-purple-700 font-bold uppercase tracking-wider mt-1">
                     {selectedSlot.room} • {SLOT_LABELS[selectedSlot.slot]}
                   </p>
                 </div>
 
-                <form onSubmit={handleBook} className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <form onSubmit={handleBook} className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="space-y-1">
-                    <label className="text-[10px] font-black text-purple-700 uppercase ml-1">Nome Festeggiato/a</label>
+                    <label className="text-xs font-black text-purple-800 uppercase ml-1">Nome Festeggiato/a</label>
                     <input
                       required
                       autoFocus
                       value={formData.childName}
                       onChange={e => setFormData({...formData, childName: e.target.value})}
-                      className="w-full px-3 py-2 bg-white rounded-xl border-2 border-purple-100 focus:border-purple-500 outline-none transition-all text-sm font-bold"
-                      placeholder="Nome..."
+                      className="w-full px-4 py-3 bg-white rounded-2xl border-2 border-purple-100 focus:border-purple-600 outline-none transition-all text-sm font-bold text-gray-900 shadow-sm"
+                      placeholder="Nome bambino/a..."
                     />
                   </div>
 
                   <div className="space-y-1">
-                    <label className="text-[10px] font-black text-purple-700 uppercase ml-1">Anni Compiuti</label>
+                    <label className="text-xs font-black text-purple-800 uppercase ml-1">Anni Compiuti</label>
                     <input
                       required
                       type="number"
                       value={formData.childAge}
                       onChange={e => setFormData({...formData, childAge: e.target.value})}
-                      className="w-full px-3 py-2 bg-white rounded-xl border-2 border-purple-100 focus:border-purple-500 outline-none transition-all text-sm font-bold"
-                      placeholder="Es: 5"
+                      className="w-full px-4 py-3 bg-white rounded-2xl border-2 border-purple-100 focus:border-purple-600 outline-none transition-all text-sm font-bold text-gray-900 shadow-sm"
+                      placeholder="Es: 6"
                     />
                   </div>
 
                   <div className="space-y-1">
-                    <label className="text-[10px] font-black text-purple-700 uppercase ml-1">Cellulare Genitore</label>
+                    <label className="text-xs font-black text-purple-800 uppercase ml-1">Cellulare Genitore</label>
                     <input
                       required
                       type="tel"
                       value={formData.parentPhone}
                       onChange={e => setFormData({...formData, parentPhone: e.target.value})}
-                      className="w-full px-3 py-2 bg-white rounded-xl border-2 border-purple-100 focus:border-purple-500 outline-none transition-all text-sm font-bold"
+                      className="w-full px-4 py-3 bg-white rounded-2xl border-2 border-purple-100 focus:border-purple-600 outline-none transition-all text-sm font-bold text-gray-900 shadow-sm"
                       placeholder="333 1234567"
                     />
                   </div>
 
                   <div className="space-y-1">
-                    <label className="text-[10px] font-black text-purple-700 uppercase ml-1">Note (Opzionale)</label>
+                    <label className="text-xs font-black text-purple-800 uppercase ml-1">Note (Opzionale)</label>
                     <input
                       value={formData.notes}
                       onChange={e => setFormData({...formData, notes: e.target.value})}
-                      className="w-full px-3 py-2 bg-white rounded-xl border-2 border-purple-100 focus:border-purple-500 outline-none transition-all text-sm font-bold"
-                      placeholder="Es: Intolleranze..."
+                      className="w-full px-4 py-3 bg-white rounded-2xl border-2 border-purple-100 focus:border-purple-600 outline-none transition-all text-sm font-bold text-gray-900 shadow-sm"
+                      placeholder="Es: Intolleranze, animazione speciale..."
                     />
                   </div>
 
-                  <div className="md:col-span-2 pt-1">
+                  <div className="md:col-span-2 pt-2">
                     <button
                       disabled={isSubmitting}
-                      className="w-full py-3 bg-purple-600 text-white rounded-xl font-black text-lg shadow-lg hover:bg-purple-700 transition-all active:scale-[0.98] disabled:opacity-50"
+                      className="w-full py-4 bg-purple-600 hover:bg-purple-700 text-white rounded-2xl font-black text-base shadow-lg shadow-purple-600/30 transition-all active:scale-[0.98] disabled:opacity-50"
                     >
-                      {isSubmitting ? 'MAGIA IN CORSO...' : 'MAGIA PRONTA!'}
+                      {isSubmitting ? 'MAGIA IN CORSO...' : 'CONFERMA PRENOTAZIONE'}
                     </button>
                   </div>
                 </form>
-
-                <div className="flex gap-4 mt-6 pt-4 border-t border-purple-100">
-                  <div className="flex items-center gap-1.5">
-                    <div className="w-2 h-2 rounded-full bg-green-500" />
-                    <span className="text-[9px] font-black text-gray-500 uppercase tracking-tighter">Confermata dall'amministratore</span>
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    <div className="w-2 h-2 rounded-full bg-amber-500" />
-                    <span className="text-[9px] font-black text-gray-500 uppercase tracking-tighter">In attesa di verifica</span>
-                  </div>
-                </div>
               </div>
             </motion.div>
-          )}
-
-          {isAdmin && (
-            <div className="bg-indigo-50 rounded-2xl p-6 border-2 border-indigo-100">
-              <h4 className="text-lg font-black text-indigo-900 mb-2">Modalità Amministratore</h4>
-              <p className="text-indigo-700 text-sm">
-                In qualità di amministratore puoi visualizzare i recapiti telefonici e gestire le prenotazioni.
+          ) : (
+            <div className="text-center py-8 bg-gray-50 rounded-3xl border border-gray-200">
+              <p className="text-sm font-bold text-gray-500">
+                Seleziona uno slot sopra per visualizzare la scheda o effettuare una prenotazione.
               </p>
             </div>
           )}

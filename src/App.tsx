@@ -45,6 +45,7 @@ function AppContent() {
   const [view, setView] = useState<'calendar' | 'admin'>('calendar');
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
   const [selectedSlot, setSelectedSlot] = useState<{ room: Room, slot: Slot } | undefined>(undefined);
+  const [selectedBooking, setSelectedBooking] = useState<Booking | undefined>(undefined);
   const [bookings, setBookings] = useState<Booking[]>([]);
   const { isAdmin, loading, isAnonymous, user } = useAuth();
 
@@ -57,14 +58,16 @@ function AppContent() {
     return unsubscribe;
   }, []);
 
-  const handleSlotDoubleClick = (date: Date, room: Room, slot: Slot) => {
+  const handleSlotClick = (date: Date, room: Room, slot: Slot, booking?: Booking) => {
     setSelectedDate(date);
     setSelectedSlot({ room, slot });
+    setSelectedBooking(booking);
   };
 
   const handleCloseModal = () => {
     setSelectedDate(null);
     setSelectedSlot(undefined);
+    setSelectedBooking(undefined);
   };
 
   if (loading) {
@@ -116,7 +119,7 @@ function AppContent() {
                 </div>
               </div>
 
-              <Calendar onSlotDoubleClick={handleSlotDoubleClick} />
+              <Calendar onSlotClick={handleSlotClick} />
             </motion.div>
           ) : (
             isAdmin ? (
@@ -131,13 +134,6 @@ function AppContent() {
                   Inserisci la password (iniziale: <strong>123456</strong>) per accedere alla gestione dei compleanni.
                 </p>
                 <div className="flex flex-col sm:flex-row gap-3 justify-center mt-6">
-                  <button 
-                    onClick={() => {
-                      const { openAdminLoginModal } = (window as any);
-                    }}
-                    className="hidden"
-                  >
-                  </button>
                   <AdminAccessButton onViewChange={(v) => setView(v)} />
                 </div>
               </div>
@@ -165,6 +161,7 @@ function AppContent() {
             bookings={bookings} 
             onClose={handleCloseModal}
             initialSlot={selectedSlot}
+            initialBooking={selectedBooking}
           />
         )}
       </AnimatePresence>
