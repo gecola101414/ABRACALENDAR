@@ -20,6 +20,26 @@ import { db } from './lib/firebase';
 import { AnimatePresence, motion } from 'framer-motion';
 import { Wand2, PartyPopper, Sparkles, AlertCircle } from 'lucide-react';
 
+function AdminAccessButton({ onViewChange }: { onViewChange: (v: 'calendar' | 'admin') => void }) {
+  const { openAdminLoginModal } = useAuth();
+  return (
+    <div className="flex gap-2">
+      <button 
+        onClick={() => onViewChange('calendar')}
+        className="px-4 py-2.5 bg-gray-100 text-gray-700 rounded-xl font-bold hover:bg-gray-200 transition-colors text-xs"
+      >
+        Calendario
+      </button>
+      <button 
+        onClick={openAdminLoginModal}
+        className="px-5 py-2.5 bg-purple-600 text-white rounded-xl font-black hover:bg-purple-700 transition-all shadow-md text-xs active:scale-95"
+      >
+        Accedi con Password
+      </button>
+    </div>
+  );
+}
+
 function AppContent() {
   const [view, setView] = useState<'calendar' | 'admin'>('calendar');
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
@@ -101,16 +121,24 @@ function AppContent() {
             isAdmin ? (
               <AdminDashboard key="admin" />
             ) : (
-              <div className="text-center py-20 bg-white rounded-3xl shadow-sm border border-gray-100">
-                <Wand2 className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-                <h2 className="text-2xl font-black text-gray-900">Accesso Riservato</h2>
-                <p className="text-gray-500 mt-2">Devi essere loggato come amministratore per vedere questa pagina.</p>
-                <button 
-                  onClick={() => setView('calendar')}
-                  className="mt-6 px-6 py-3 bg-purple-600 text-white rounded-xl font-bold hover:bg-purple-700 transition-colors"
-                >
-                  Torna al Calendario
-                </button>
+              <div className="text-center py-20 bg-white rounded-3xl shadow-sm border border-gray-100 max-w-md mx-auto p-8">
+                <div className="w-16 h-16 bg-purple-100 text-purple-600 rounded-2xl flex items-center justify-center mx-auto mb-4">
+                  <Wand2 className="w-8 h-8" />
+                </div>
+                <h2 className="text-2xl font-black text-gray-900">Area Riservata Amministratore</h2>
+                <p className="text-gray-500 text-sm mt-2">
+                  Inserisci la password (iniziale: <strong>123456</strong>) per accedere alla gestione dei compleanni.
+                </p>
+                <div className="flex flex-col sm:flex-row gap-3 justify-center mt-6">
+                  <button 
+                    onClick={() => {
+                      const { openAdminLoginModal } = (window as any);
+                    }}
+                    className="hidden"
+                  >
+                  </button>
+                  <AdminAccessButton onViewChange={(v) => setView(v)} />
+                </div>
               </div>
             )
           )}

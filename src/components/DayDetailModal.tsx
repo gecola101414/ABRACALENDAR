@@ -1,13 +1,14 @@
 import React, { useState } from 'react';
 import { format } from 'date-fns';
 import { it } from 'date-fns/locale';
-import { X, CheckCircle2, AlertCircle, Phone, Baby, Calendar as CalIcon, Clock, Wand2, FileText, Info } from 'lucide-react';
+import { X, CheckCircle2, AlertCircle, Phone, Baby, Calendar as CalIcon, Clock, Wand2, FileText, Info, Sparkles } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ROOMS, SLOTS, Booking, Slot, Room, ROOM_COLORS, SLOT_LABELS } from '../types';
 import { db } from '../lib/firebase';
 import { doc, writeBatch, serverTimestamp, collection, getDocs } from 'firebase/firestore';
 import { useAuth } from '../lib/AuthContext';
 import { cn } from '../lib/utils';
+import { BirthdayCakeSymbol } from './BirthdayCakeSymbol';
 
 interface DayDetailModalProps {
   date: Date;
@@ -166,20 +167,19 @@ export const DayDetailModal: React.FC<DayDetailModalProps> = ({ date, bookings, 
                         </div>
                         
                         {booking ? (
-                          <div className="flex flex-col">
+                          <div className="flex flex-col gap-0.5">
                             <span className="text-[10px] font-black text-gray-800 truncate">
                               {isOwner ? booking.childName : "OCCUPATA"}
                             </span>
-                            {isOwner && (
-                              <span className={cn(
-                                "text-[7px] font-black px-1 rounded-sm mt-0.5 w-fit",
-                                booking.status === 'confirmed' 
-                                  ? "bg-green-100 text-green-700" 
-                                  : "bg-amber-100 text-amber-700"
-                              )}>
-                                {booking.status === 'confirmed' ? "CONFERMATA" : "IN ATTESA"}
+                            {booking.status === 'confirmed' ? (
+                              <div className="mt-0.5">
+                                <BirthdayCakeSymbol size="sm" showLabel={isOwner} animated={true} />
+                              </div>
+                            ) : isOwner ? (
+                              <span className="text-[7px] font-black px-1 py-0.2 bg-amber-100 text-amber-800 rounded-sm w-fit border border-amber-200">
+                                IN ATTESA DI CONFERMA
                               </span>
-                            )}
+                            ) : null}
                           </div>
                         ) : (
                           <span className={cn(

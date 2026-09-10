@@ -162,12 +162,17 @@ export const Calendar: React.FC<CalendarProps> = ({ onSlotDoubleClick }) => {
                                   {SLOT_LABELS[slot].charAt(0)}
                                 </span>
                                 {booking ? (
-                                  <span className={cn(
-                                    "text-[10px] font-black truncate w-full px-0.5",
-                                    isOwner ? "text-amber-900" : "text-gray-700"
-                                  )}>
-                                    {isOwner ? booking.childName : "OCCUPATA"}
-                                  </span>
+                                  <div className="flex items-center justify-center gap-0.5 w-full">
+                                    {booking.status === 'confirmed' && (
+                                      <span className="text-xs shrink-0 animate-bounce" title="Festa Confermata!">🎂</span>
+                                    )}
+                                    <span className={cn(
+                                      "text-[10px] font-black truncate px-0.5",
+                                      isOwner ? "text-amber-900" : "text-gray-700"
+                                    )}>
+                                      {isOwner ? booking.childName : "OCCUPATA"}
+                                    </span>
+                                  </div>
                                 ) : (
                                   <span className="text-[9px] font-black text-gray-200 group-hover/slot:text-purple-300">
                                     LIBERO
@@ -187,7 +192,7 @@ export const Calendar: React.FC<CalendarProps> = ({ onSlotDoubleClick }) => {
         </table>
       </div>
 
-      <div className="px-4 py-2 bg-gray-50 border-t flex flex-wrap gap-4 text-[9px] font-bold text-gray-400 uppercase tracking-widest">
+      <div className="px-4 py-2 bg-gray-50 border-t flex flex-wrap gap-4 text-[9px] font-bold text-gray-500 uppercase tracking-widest items-center">
         <div className="flex items-center gap-1.5">
           <div className="w-2.5 h-2.5 rounded bg-white border border-dashed border-gray-300" />
           <span>Libero</span>
@@ -198,7 +203,11 @@ export const Calendar: React.FC<CalendarProps> = ({ onSlotDoubleClick }) => {
         </div>
         <div className="flex items-center gap-1.5">
           <div className="w-2.5 h-2.5 rounded bg-gray-200 border border-gray-300" />
-          <span>Occupato da altri</span>
+          <span>Occupata</span>
+        </div>
+        <div className="flex items-center gap-1.5 ml-auto text-amber-700 font-black">
+          <span className="text-xs">🎂</span>
+          <span>Festa Confermata dall'Amministratore</span>
         </div>
       </div>
     </div>

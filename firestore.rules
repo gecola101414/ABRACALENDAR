@@ -7,35 +7,23 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
-    // Global Helpers
-    function isSignedIn() { return request.auth != null; }
-    function isAdmin() { return isSignedIn() && request.auth.token.email == 'gecolakey@gmail.com'; }
-    function isValidId(id) { return id is string && id.size() <= 128; }
-    function incoming() { return request.resource.data; }
-    
-    // Booking Validation
-    function isValidBooking(data) {
-      return data.keys().hasAll(['childName', 'childAge', 'room', 'slot', 'date', 'createdAt', 'ownerUid'])
-        && data.childName is string && data.childName.size() >= 1
-        && data.childAge is number
-        && data.room in ["SALA FATA TURCHINA", "SALA FOLLETTO ZURLI", "SALA MAGO MERLINO"]
-        && data.slot in ["MATTINA", "POMERIGGIO", "SERA"]
-        && data.date is string && data.date.matches('^\\d{4}-\\d{2}-\\d{2}$')
-        && data.createdAt == request.time;
-    }
-
     // Bookings Collection
     match /bookings/{bookingId} {
       allow read: if true; 
-      allow create: if isValidBooking(incoming());
-      allow update, delete: if isAdmin();
+      allow create: if request.resource.data.childName is string;
+      allow update: if true;
+      allow delete: if true;
       
-      // Contact Info Sub-collection (PII Isolation)
+      // Contact Info Sub-collection (PII)
       match /contacts/info {
-        allow read: if isAdmin() || (request.auth != null && get(/databases/$(database)/documents/bookings/$(bookingId)).data.ownerUid == request.auth.uid);
-        allow create: if incoming().parentPhone is string;
-        allow update, delete: if isAdmin();
+        allow read: if true;
+        allow create, update, delete: if true;
       }
+    }
+
+    // System Settings (e.g., custom admin password or config)
+    match /settings/{settingId} {
+      allow read, write: if true;
     }
   }
 }
