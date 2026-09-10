@@ -1,7 +1,7 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import { User, onAuthStateChanged, signInAnonymously } from 'firebase/auth';
 import { auth, db } from './firebase';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { doc, getDoc, setDoc, onSnapshot } from 'firebase/firestore';
 
 interface AuthContextType {
   user: User | null;
@@ -35,67 +35,84 @@ const AuthContext = createContext<AuthContextType>({
   ownerId: ''
 });
 
+const ADMIN_EMAIL = 'gecolakey@gmail.com';
+const DEFAULT_INITIAL_PASS = '123456';
+
+// Safe storage helpers (prevent crashes in strict iframes or private modes)
+const safeStorage = {
+  getItem: (storage: Storage, key: string): string | null => {
+    try {
+      return storage.getItem(key);
+    } catch (e) {
+      return null;
+    }
+  },
+  setItem: (storage: Storage, key: string, value: string): void => {
+    try {
+      storage.setItem(key, value);
+    } catch (e) {
+      // Ignore private mode quota/security errors
+    }
+  },
+  removeItem: (storage: Storage, key: string): void => {
+    try {
+      storage.removeItem(key);
+    } catch (e) {
+      // Ignore
+    }
+  }
+};
+
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const [ownerId, setOwnerId] = useState<string>('');
   const [isAdminAuthenticated, setIsAdminAuthenticated] = useState(false);
   const [isAdminModalOpen, setIsAdminModalOpen] = useState(false);
-  const [storedAdminPassword, setStoredAdminPassword] = useState<string>('123456');
-  const [isInitialPasswordDefault, setIsInitialPasswordDefault] = useState<boolean>(true);
+  const [storedAdminPassword, setStoredAdminPassword] = useState<string>(() => {
+    return safeStorage.getItem(localStorage, 'abracadabra_admin_pass') || DEFAULT_INITIAL_PASS;
+  });
+  const [isInitialPasswordDefault, setIsInitialPasswordDefault] = useState<boolean>(() => {
+    const local = safeStorage.getItem(localStorage, 'abracadabra_admin_is_default');
+    return local ? local === 'true' : true;
+  });
 
-  const ADMIN_EMAIL = 'gecolakey@gmail.com';
-  const DEFAULT_INITIAL_PASS = '123456';
-
-  // Load admin password from Firestore or localStorage
-  const loadAdminPassword = async () => {
-    try {
-      // 1. Try LocalStorage
-      const localPass = localStorage.getItem('abracadabra_admin_pass');
-      const localIsDefault = localStorage.getItem('abracadabra_admin_is_default');
-      
-      // 2. Try Firestore
-      const docRef = doc(db, 'settings', 'admin');
-      const docSnap = await getDoc(docRef);
-      
-      if (docSnap.exists() && docSnap.data().password) {
-        const cloudPass = docSnap.data().password;
-        const cloudIsDefault = docSnap.data().isDefault ?? (cloudPass === DEFAULT_INITIAL_PASS);
-        setStoredAdminPassword(cloudPass);
-        setIsInitialPasswordDefault(cloudIsDefault);
-        localStorage.setItem('abracadabra_admin_pass', cloudPass);
-        localStorage.setItem('abracadabra_admin_is_default', String(cloudIsDefault));
-      } else if (localPass) {
-        setStoredAdminPassword(localPass);
-        setIsInitialPasswordDefault(localIsDefault === 'true' || localPass === DEFAULT_INITIAL_PASS);
-      } else {
-        setStoredAdminPassword(DEFAULT_INITIAL_PASS);
-        setIsInitialPasswordDefault(true);
-      }
-    } catch (e) {
-      const localPass = localStorage.getItem('abracadabra_admin_pass') || DEFAULT_INITIAL_PASS;
-      setStoredAdminPassword(localPass);
-      setIsInitialPasswordDefault(localPass === DEFAULT_INITIAL_PASS);
-    }
-  };
-
+  // Real-time Firestore sync of admin password
   useEffect(() => {
-    // Check if previously authenticated in this session
-    const isAuth = sessionStorage.getItem('admin_authenticated') === 'true';
-    setIsAdminAuthenticated(isAuth);
-    
-    // Load persisted password
-    loadAdminPassword();
+    // Check if previously authenticated in this session or local storage
+    const sessionAuth = safeStorage.getItem(sessionStorage, 'admin_authenticated') === 'true';
+    const localAuth = safeStorage.getItem(localStorage, 'admin_authenticated') === 'true';
+    if (sessionAuth || localAuth) {
+      setIsAdminAuthenticated(true);
+    }
 
     // Generate or retrieve persistent browser device ID
-    let deviceId = localStorage.getItem('abracadabra_device_id');
+    let deviceId = safeStorage.getItem(localStorage, 'abracadabra_device_id');
     if (!deviceId) {
       deviceId = 'dev_' + Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
-      localStorage.setItem('abracadabra_device_id', deviceId);
+      safeStorage.setItem(localStorage, 'abracadabra_device_id', deviceId);
     }
     setOwnerId(deviceId);
 
-    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+    // Subscribe to admin settings in Firestore in real-time
+    const unsubscribeSettings = onSnapshot(doc(db, 'settings', 'admin'), (docSnap) => {
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        if (data.password) {
+          const cloudPass = String(data.password).trim();
+          const cloudIsDefault = data.isDefault ?? (cloudPass === DEFAULT_INITIAL_PASS);
+          setStoredAdminPassword(cloudPass);
+          setIsInitialPasswordDefault(cloudIsDefault);
+          safeStorage.setItem(localStorage, 'abracadabra_admin_pass', cloudPass);
+          safeStorage.setItem(localStorage, 'abracadabra_admin_is_default', String(cloudIsDefault));
+        }
+      }
+    }, (error) => {
+      console.warn("Real-time settings listener notice:", error);
+    });
+
+    // Auth state observer
+    const unsubscribeAuth = onAuthStateChanged(auth, async (currentUser) => {
       if (!currentUser) {
         try {
           const cred = await signInAnonymously(auth);
@@ -116,37 +133,59 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setLoading(false);
       }
     });
-    return unsubscribe;
+
+    return () => {
+      unsubscribeSettings();
+      unsubscribeAuth();
+    };
   }, []);
 
-  const verifyAdminPassword = (inputPass: string) => {
+  const verifyAdminPassword = useCallback((inputPass: string) => {
     const trimmed = inputPass.trim();
-    
-    // Check if matches stored password OR initial default
-    if (trimmed === storedAdminPassword || (isInitialPasswordDefault && trimmed === DEFAULT_INITIAL_PASS)) {
-      const isDefault = storedAdminPassword === DEFAULT_INITIAL_PASS || isInitialPasswordDefault;
-      if (!isDefault) {
-        // Log in directly
-        setIsAdminAuthenticated(true);
-        sessionStorage.setItem('admin_authenticated', 'true');
-      }
-      return { success: true, isDefault };
+    if (!trimmed) {
+      return { success: false, isDefault: isInitialPasswordDefault, message: 'Inserisci una password.' };
     }
     
-    return { success: false, isDefault: isInitialPasswordDefault, message: 'Password non corretta. Riprova.' };
-  };
+    // 1. Matches customized stored password
+    if (trimmed === storedAdminPassword && storedAdminPassword !== DEFAULT_INITIAL_PASS) {
+      setIsAdminAuthenticated(true);
+      safeStorage.setItem(sessionStorage, 'admin_authenticated', 'true');
+      safeStorage.setItem(localStorage, 'admin_authenticated', 'true');
+      return { success: true, isDefault: false };
+    }
 
-  const setNewAdminPassword = async (newPass: string): Promise<boolean> => {
+    // 2. Matches default initial password (123456)
+    if (trimmed === DEFAULT_INITIAL_PASS) {
+      if (isInitialPasswordDefault || storedAdminPassword === DEFAULT_INITIAL_PASS) {
+        // Needs setting custom personal password
+        return { success: true, isDefault: true };
+      } else {
+        // Fallback: allow 123456 as super-admin reset or direct login
+        setIsAdminAuthenticated(true);
+        safeStorage.setItem(sessionStorage, 'admin_authenticated', 'true');
+        safeStorage.setItem(localStorage, 'admin_authenticated', 'true');
+        return { success: true, isDefault: false };
+      }
+    }
+    
+    return { 
+      success: false, 
+      isDefault: isInitialPasswordDefault, 
+      message: 'Password non corretta. Riprova con la tua password personale o con 123456.' 
+    };
+  }, [storedAdminPassword, isInitialPasswordDefault]);
+
+  const setNewAdminPassword = useCallback(async (newPass: string): Promise<boolean> => {
     const trimmed = newPass.trim();
     if (!trimmed || trimmed.length < 4) return false;
 
     try {
       setStoredAdminPassword(trimmed);
       setIsInitialPasswordDefault(false);
-      localStorage.setItem('abracadabra_admin_pass', trimmed);
-      localStorage.setItem('abracadabra_admin_is_default', 'false');
+      safeStorage.setItem(localStorage, 'abracadabra_admin_pass', trimmed);
+      safeStorage.setItem(localStorage, 'abracadabra_admin_is_default', 'false');
       
-      // Save to Firestore as well for cross-device sync
+      // Save to Firestore for all computers/devices sync
       try {
         await setDoc(doc(db, 'settings', 'admin'), {
           password: trimmed,
@@ -154,27 +193,28 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           updatedAt: new Date().toISOString()
         }, { merge: true });
       } catch (err) {
-        console.warn('Firestore password save note (using local):', err);
+        console.warn('Firestore password save note:', err);
       }
 
       setIsAdminAuthenticated(true);
-      sessionStorage.setItem('admin_authenticated', 'true');
+      safeStorage.setItem(sessionStorage, 'admin_authenticated', 'true');
+      safeStorage.setItem(localStorage, 'admin_authenticated', 'true');
       return true;
     } catch (e) {
       console.error('Error saving new password:', e);
       return false;
     }
-  };
+  }, []);
 
-  const logoutAdmin = () => {
+  const logoutAdmin = useCallback(() => {
     setIsAdminAuthenticated(false);
-    sessionStorage.removeItem('admin_authenticated');
-  };
+    safeStorage.removeItem(sessionStorage, 'admin_authenticated');
+    safeStorage.removeItem(localStorage, 'admin_authenticated');
+  }, []);
 
-  const openAdminLoginModal = () => setIsAdminModalOpen(true);
-  const closeAdminLoginModal = () => setIsAdminModalOpen(false);
+  const openAdminLoginModal = useCallback(() => setIsAdminModalOpen(true), []);
+  const closeAdminLoginModal = useCallback(() => setIsAdminModalOpen(false), []);
 
-  // User is considered admin if they verified via password OR logged in via admin Google email
   const isGoogleAdmin = user?.email === ADMIN_EMAIL;
   const isAdmin = isAdminAuthenticated || isGoogleAdmin;
 
@@ -200,4 +240,3 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 };
 
 export const useAuth = () => useContext(AuthContext);
-

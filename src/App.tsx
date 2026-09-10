@@ -19,6 +19,7 @@ import { collection, onSnapshot, query } from 'firebase/firestore';
 import { db } from './lib/firebase';
 import { AnimatePresence, motion } from 'framer-motion';
 import { Wand2, PartyPopper, Sparkles, AlertCircle } from 'lucide-react';
+import { ErrorBoundary } from './components/ErrorBoundary';
 
 function AdminAccessButton({ onViewChange }: { onViewChange: (v: 'calendar' | 'admin') => void }) {
   const { openAdminLoginModal } = useAuth();
@@ -173,9 +174,11 @@ function AppContent() {
 
 export default function App() {
   return (
-    <AuthProvider>
-      <AppContent />
-    </AuthProvider>
+    <ErrorBoundary fallbackTitle="Errore imprevisto nell'applicazione">
+      <AuthProvider>
+        <AppContent />
+      </AuthProvider>
+    </ErrorBoundary>
   );
 }
 

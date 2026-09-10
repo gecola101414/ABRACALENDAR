@@ -1,19 +1,63 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { collection, query, onSnapshot, orderBy, deleteDoc, doc, getDocs, updateDoc } from 'firebase/firestore';
 import { db } from '../lib/firebase';
-import { Booking, ROOMS, ROOM_COLORS, SLOT_LABELS } from '../types';
-import { format, isAfter, startOfToday } from 'date-fns';
+import { Booking, ROOMS, ROOM_COLORS, SLOT_LABELS, Room, Slot } from '../types';
+import { format } from 'date-fns';
 import { it } from 'date-fns/locale';
 import { 
-  Trash2, Phone, Baby, Calendar, User, Search, Filter, 
+  Trash2, Phone, Baby, Calendar, Search, Filter, 
   CheckCircle2, Clock, Lock, KeyRound, Sparkles, MessageCircle, AlertCircle, Shield
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '../lib/AuthContext';
 import { cn } from '../lib/utils';
 import { BirthdayCakeSymbol } from './BirthdayCakeSymbol';
+import { ErrorBoundary } from './ErrorBoundary';
 
-export const AdminDashboard: React.FC = () => {
+// Helper functions for bulletproof rendering against corrupt/incomplete data
+const safeFormatDate = (dateStr: any): string => {
+  if (!dateStr) return 'Data da definire';
+  try {
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return String(dateStr);
+    return format(d, 'EEEE d MMMM yyyy', { locale: it });
+  } catch (e) {
+    return String(dateStr || 'Data non valida');
+  }
+};
+
+const safeRoom = (room: any): Room => {
+  if (room && typeof room === 'string' && ROOMS.includes(room as Room)) {
+    return room as Room;
+  }
+  return ROOMS[0];
+};
+
+const safeRoomColor = (room: any): string => {
+  const r = safeRoom(room);
+  return ROOM_COLORS[r] || 'bg-purple-100 text-purple-800 border-purple-200';
+};
+
+const safeSlotLabel = (slot: any): string => {
+  if (slot && typeof slot === 'string' && slot in SLOT_LABELS) {
+    return SLOT_LABELS[slot as Slot];
+  }
+  return 'Fascia Oraria';
+};
+
+const safeChildName = (name: any): string => {
+  if (typeof name === 'string' && name.trim()) return name.trim();
+  return 'Compleanno';
+};
+
+const safeChildAge = (age: any): string => {
+  if (age !== undefined && age !== null && !isNaN(Number(age))) {
+    return `${age} ANNI`;
+  }
+  return 'Festa';
+};
+
+export const AdminDashboardContent: React.FC = () => {
   const { isAdminAuthenticated, verifyAdminPassword, setNewAdminPassword, isInitialPasswordDefault } = useAuth();
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -33,28 +77,53 @@ export const AdminDashboard: React.FC = () => {
 
   useEffect(() => {
     if (!isAdminAuthenticated) return;
-    const q = query(collection(db, 'bookings'), orderBy('date', 'asc'));
+
+    let isMounted = true;
+    const q = query(collection(db, 'bookings'));
+    
     const unsubscribe = onSnapshot(q, async (snapshot) => {
-      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Booking));
+      if (!isMounted) return;
+      
+      const data = snapshot.docs.map(docSnap => ({ 
+        id: docSnap.id, 
+        ...docSnap.data() 
+      } as Booking));
+
+      // Sort safely in-memory
+      data.sort((a, b) => {
+        const da = a.date ? new Date(a.date).getTime() : 0;
+        const db = b.date ? new Date(b.date).getTime() : 0;
+        return da - db;
+      });
+
       setBookings(data);
       
-      // Fetch all parent contacts
+      // Fetch parent contacts safely in background
       const contactsMap: Record<string, string> = {};
       for (const b of data) {
         if (b.id) {
           try {
             const contactSnap = await getDocs(collection(db, 'bookings', b.id, 'contacts'));
-            contactSnap.forEach(doc => {
-              contactsMap[b.id!] = doc.data().parentPhone;
+            contactSnap.forEach(cDoc => {
+              const p = cDoc.data()?.parentPhone;
+              if (p) contactsMap[b.id!] = String(p);
             });
           } catch (err) {
-            console.warn("Contacts fetch note:", err);
+            // Non-blocking catch
           }
         }
       }
-      setContacts(contactsMap);
+      if (isMounted) {
+        setContacts(prev => ({ ...prev, ...contactsMap }));
+      }
+    }, (err) => {
+      console.warn("Bookings real-time listener notice:", err);
     });
-    return unsubscribe;
+
+    return () => {
+      isMounted = false;
+      unsubscribe();
+    };
   }, [isAdminAuthenticated]);
 
   const handleLogin = (e: React.FormEvent) => {
@@ -92,7 +161,7 @@ export const AdminDashboard: React.FC = () => {
   };
 
   const handleDelete = async (id: string, childName: string) => {
-    if (window.confirm(`Sei sicuro di voler eliminare la prenotazione per la festa di ${childName.toUpperCase()}?`)) {
+    if (window.confirm(`Sei sicuro di voler eliminare la prenotazione per la festa di ${safeChildName(childName).toUpperCase()}?`)) {
       try {
         await deleteDoc(doc(db, 'bookings', id));
       } catch (error) {
@@ -112,6 +181,21 @@ export const AdminDashboard: React.FC = () => {
       console.error("Status update error:", error);
     }
   };
+
+  // Filter Bookings safely
+  const filteredBookings = useMemo(() => {
+    return bookings.filter(b => {
+      const cName = safeChildName(b.childName).toLowerCase();
+      const phone = (contacts[b.id!] || '').toLowerCase();
+      const sTerm = searchTerm.toLowerCase().trim();
+
+      const matchesSearch = !sTerm || cName.includes(sTerm) || phone.includes(sTerm);
+      const matchesRoom = filterRoom === 'Tutte' || b.room === filterRoom;
+      const matchesStatus = filterStatus === 'all' || 
+                            (filterStatus === 'confirmed' ? b.status === 'confirmed' : b.status !== 'confirmed');
+      return matchesSearch && matchesRoom && matchesStatus;
+    });
+  }, [bookings, searchTerm, contacts, filterRoom, filterStatus]);
 
   if (!isAdminAuthenticated) {
     return (
@@ -162,15 +246,6 @@ export const AdminDashboard: React.FC = () => {
       </div>
     );
   }
-
-  // Filter Bookings
-  const filteredBookings = bookings.filter(b => {
-    const matchesSearch = b.childName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                          (contacts[b.id!] && contacts[b.id!].includes(searchTerm));
-    const matchesRoom = filterRoom === 'Tutte' || b.room === filterRoom;
-    const matchesStatus = filterStatus === 'all' || b.status === filterStatus;
-    return matchesSearch && matchesRoom && matchesStatus;
-  });
 
   const totalBookings = bookings.length;
   const pendingCount = bookings.filter(b => b.status !== 'confirmed').length;
@@ -321,11 +396,17 @@ export const AdminDashboard: React.FC = () => {
             {filteredBookings.map(booking => {
               const isConfirmed = booking.status === 'confirmed';
               const parentPhone = contacts[booking.id!] || '';
+              const roomName = safeRoom(booking.room);
+              const roomColorClass = safeRoomColor(booking.room);
+              const childName = safeChildName(booking.childName);
+              const childAgeStr = safeChildAge(booking.childAge);
+              const dateFormatted = safeFormatDate(booking.date);
+              const slotText = safeSlotLabel(booking.slot);
 
               return (
                 <motion.div
                   layout
-                  key={booking.id}
+                  key={booking.id || String(Math.random())}
                   initial={{ opacity: 0, scale: 0.98 }}
                   animate={{ opacity: 1, scale: 1 }}
                   exit={{ opacity: 0, scale: 0.95 }}
@@ -346,12 +427,12 @@ export const AdminDashboard: React.FC = () => {
                     <div className="flex gap-4">
                       {/* Room / Avatar Icon */}
                       <div className={cn(
-                        "w-16 h-16 rounded-2xl flex flex-col items-center justify-center shrink-0 shadow-inner font-black",
-                        ROOM_COLORS[booking.room]
+                        "w-16 h-16 rounded-2xl flex flex-col items-center justify-center shrink-0 shadow-inner font-black text-center",
+                        roomColorClass
                       )}>
                         <Baby className="w-7 h-7 mb-0.5" />
-                        <span className="text-[9px] uppercase tracking-tighter text-center leading-none px-1">
-                          {booking.room.replace('SALA ', '')}
+                        <span className="text-[9px] uppercase tracking-tighter text-center leading-none px-1 truncate w-full">
+                          {roomName.replace('SALA ', '')}
                         </span>
                       </div>
 
@@ -359,19 +440,19 @@ export const AdminDashboard: React.FC = () => {
                         {/* Child Name & Age */}
                         <div className="flex flex-wrap items-center gap-2">
                           <h4 className="font-black text-gray-900 text-xl tracking-tight uppercase">
-                            {booking.childName}
+                            {childName}
                           </h4>
                           <span className="px-2 py-0.5 bg-purple-100 text-purple-800 text-xs font-black rounded-lg">
-                            {booking.childAge} ANNI
+                            {childAgeStr}
                           </span>
                         </div>
 
                         {/* Date & Slot */}
                         <div className="flex items-center gap-2 text-gray-600 text-xs sm:text-sm font-bold mt-1">
                           <Calendar className="w-4 h-4 text-purple-600 shrink-0" />
-                          <span>{format(new Date(booking.date), 'EEEE d MMMM yyyy', { locale: it })}</span>
+                          <span className="capitalize">{dateFormatted}</span>
                           <span className="text-gray-300">•</span>
-                          <span className="font-black text-purple-700">{SLOT_LABELS[booking.slot]}</span>
+                          <span className="font-black text-purple-700">{slotText}</span>
                         </div>
                       </div>
                     </div>
@@ -403,7 +484,7 @@ export const AdminDashboard: React.FC = () => {
                         </div>
                       </div>
 
-                      {parentPhone && (
+                      {parentPhone ? (
                         <div className="flex items-center gap-1.5 shrink-0 ml-2">
                           <a
                             href={`tel:${parentPhone}`}
@@ -422,7 +503,7 @@ export const AdminDashboard: React.FC = () => {
                             <MessageCircle className="w-3.5 h-3.5" />
                           </a>
                         </div>
-                      )}
+                      ) : null}
                     </div>
 
                     {/* Notes / Special Requests */}
@@ -568,5 +649,13 @@ export const AdminDashboard: React.FC = () => {
         )}
       </AnimatePresence>
     </div>
+  );
+};
+
+export const AdminDashboard: React.FC = () => {
+  return (
+    <ErrorBoundary fallbackTitle="Errore nel caricamento del pannello amministratore">
+      <AdminDashboardContent />
+    </ErrorBoundary>
   );
 };

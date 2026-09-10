@@ -9,6 +9,7 @@ import { doc, writeBatch, serverTimestamp, collection, getDocs } from 'firebase/
 import { useAuth } from '../lib/AuthContext';
 import { cn } from '../lib/utils';
 import { BirthdayCakeSymbol } from './BirthdayCakeSymbol';
+import { ErrorBoundary } from './ErrorBoundary';
 
 interface DayDetailModalProps {
   date: Date;
@@ -17,7 +18,7 @@ interface DayDetailModalProps {
   initialSlot?: { room: Room, slot: Slot };
 }
 
-export const DayDetailModal: React.FC<DayDetailModalProps> = ({ date, bookings, onClose, initialSlot }) => {
+const DayDetailModalInner: React.FC<DayDetailModalProps> = ({ date, bookings, onClose, initialSlot }) => {
   const { isAdmin, user, ownerId } = useAuth();
   const [selectedSlot, setSelectedSlot] = useState<{ room: Room, slot: Slot } | null>(initialSlot || null);
   const [formData, setFormData] = useState({ childName: '', childAge: '', parentPhone: '', notes: '' });
@@ -297,5 +298,13 @@ export const DayDetailModal: React.FC<DayDetailModalProps> = ({ date, bookings, 
         </div>
       </motion.div>
     </div>
+  );
+};
+
+export const DayDetailModal: React.FC<DayDetailModalProps> = (props) => {
+  return (
+    <ErrorBoundary fallbackTitle="Errore nella schermata di dettaglio">
+      <DayDetailModalInner {...props} />
+    </ErrorBoundary>
   );
 };
