@@ -6,12 +6,16 @@ import { format } from 'date-fns';
 import { it } from 'date-fns/locale';
 import { 
   Trash2, Phone, Baby, Calendar, Search, Filter, 
-  CheckCircle2, Clock, Lock, KeyRound, Sparkles, MessageCircle, AlertCircle, Shield
+  CheckCircle2, Clock, Lock, KeyRound, Sparkles, MessageCircle, AlertCircle, Shield,
+  Wand2, ChevronDown, ChevronUp, ExternalLink, MessageSquare
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '../lib/AuthContext';
 import { cn } from '../lib/utils';
 import { BirthdayCakeSymbol } from './BirthdayCakeSymbol';
+import { BirthdayWhatsAppChat } from './BirthdayWhatsAppChat';
+import { AbracadabraNotesBox } from './AbracadabraNotesBox';
+import { getBirthdayWhatsAppUrl } from '../lib/whatsapp';
 import { ErrorBoundary } from './ErrorBoundary';
 
 // Helper functions for bulletproof rendering against corrupt/incomplete data
@@ -74,6 +78,8 @@ export const AdminDashboardContent: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [filterRoom, setFilterRoom] = useState<string>('Tutte');
   const [filterStatus, setFilterStatus] = useState<'all' | 'pending' | 'confirmed'>('all');
+  const [expandedChatId, setExpandedChatId] = useState<string | null>(null);
+  const [expandedNotesId, setExpandedNotesId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!isAdminAuthenticated) return;
@@ -102,6 +108,9 @@ export const AdminDashboardContent: React.FC = () => {
       const contactsMap: Record<string, string> = {};
       for (const b of data) {
         if (b.id) {
+          if (b.parentPhone) {
+            contactsMap[b.id] = String(b.parentPhone);
+          }
           try {
             const contactSnap = await getDocs(collection(db, 'bookings', b.id, 'contacts'));
             contactSnap.forEach(cDoc => {
@@ -395,7 +404,7 @@ export const AdminDashboardContent: React.FC = () => {
           <AnimatePresence mode="popLayout">
             {filteredBookings.map(booking => {
               const isConfirmed = booking.status === 'confirmed';
-              const parentPhone = contacts[booking.id!] || '';
+              const parentPhone = booking.parentPhone || contacts[booking.id!] || '';
               const roomName = safeRoom(booking.room);
               const roomColorClass = safeRoomColor(booking.room);
               const childName = safeChildName(booking.childName);
@@ -473,50 +482,147 @@ export const AdminDashboardContent: React.FC = () => {
                   {/* Contact & Notes Details */}
                   <div className="mt-5 pt-4 border-t border-gray-100 grid grid-cols-1 sm:grid-cols-2 gap-3">
                     {/* Parent Phone */}
-                    <div className="flex items-center justify-between p-3 bg-indigo-50/60 rounded-2xl border border-indigo-100">
-                      <div className="flex items-center gap-2 min-w-0">
-                        <Phone className="w-4 h-4 text-indigo-600 shrink-0" />
-                        <div className="truncate">
-                          <span className="text-[10px] font-black uppercase text-indigo-400 block leading-none">Genitore</span>
-                          <span className="text-sm font-black text-indigo-900 truncate">
-                            {parentPhone || 'Nessun recapito'}
-                          </span>
+                    <div className="flex flex-col justify-between p-3.5 bg-indigo-50/70 rounded-2xl border border-indigo-100">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <Phone className="w-4 h-4 text-indigo-600 shrink-0" />
+                          <div className="truncate">
+                            <span className="text-[10px] font-black uppercase text-indigo-400 block leading-none">Genitore</span>
+                            <span className="text-sm font-black text-indigo-900 truncate">
+                              {parentPhone || 'Nessun recapito'}
+                            </span>
+                          </div>
                         </div>
-                      </div>
 
-                      {parentPhone ? (
-                        <div className="flex items-center gap-1.5 shrink-0 ml-2">
+                        {parentPhone && (
                           <a
                             href={`tel:${parentPhone}`}
-                            className="p-2 bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 transition-all shadow-sm"
-                            title="Chiama genitore"
+                            className="p-2 bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 transition-all shadow-sm active:scale-95 shrink-0"
+                            title="Chiama al telefono"
                           >
                             <Phone className="w-3.5 h-3.5" />
                           </a>
+                        )}
+                      </div>
+
+                      {parentPhone ? (
+                        <div className="mt-2.5 pt-2 border-t border-indigo-100/80 flex items-center justify-between">
+                          {/* Prominent WhatsApp Web Button */}
                           <a
-                            href={`https://wa.me/${parentPhone.replace(/[^0-9]/g, '')}`}
+                            href={getBirthdayWhatsAppUrl(
+                              parentPhone, 
+                              childName, 
+                              booking.childAge, 
+                              dateFormatted, 
+                              roomName, 
+                              slotText
+                            )}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="p-2 bg-emerald-600 text-white rounded-xl hover:bg-emerald-700 transition-all shadow-sm"
-                            title="Messaggio WhatsApp"
+                            className="w-full inline-flex items-center justify-center gap-1.5 py-2 px-3 bg-[#25D366] hover:bg-[#1ebd59] text-white rounded-xl font-black text-xs transition-all shadow-sm hover:shadow active:scale-95"
+                            title="Apri WhatsApp Web per messaggiare con il genitore"
                           >
-                            <MessageCircle className="w-3.5 h-3.5" />
+                            <MessageCircle className="w-3.5 h-3.5 fill-white text-[#25D366]" />
+                            <span>Apri WhatsApp Web</span>
+                            <ExternalLink className="w-3 h-3 opacity-80" />
                           </a>
                         </div>
                       ) : null}
                     </div>
 
-                    {/* Notes / Special Requests */}
-                    <div className="p-3 bg-gray-50 rounded-2xl border border-gray-100 flex flex-col justify-center">
-                      <span className="text-[10px] font-black uppercase text-gray-400 block leading-none mb-0.5">Note Festa</span>
-                      <p className="text-xs font-bold text-gray-700 line-clamp-2">
-                        {booking.notes ? `"${booking.notes}"` : <span className="text-gray-400 italic">Nessuna nota specificata</span>}
-                      </p>
+                    {/* Notes / Special Requests from Client */}
+                    <div className="p-3.5 bg-gray-50 rounded-2xl border border-gray-100 flex flex-col justify-between">
+                      <div>
+                        <span className="text-[10px] font-black uppercase text-gray-400 block leading-none mb-1">Note Cliente</span>
+                        <p className="text-xs font-bold text-gray-700 line-clamp-2">
+                          {booking.notes ? `"${booking.notes}"` : <span className="text-gray-400 italic">Nessuna nota specificata</span>}
+                        </p>
+                      </div>
+
+                      {/* Abracadabra Notes Quick Preview badge */}
+                      {booking.abracadabraNotes && (
+                        <div className="mt-2 pt-1.5 border-t border-gray-200/60 flex items-center gap-1 text-[10px] font-black text-amber-800 bg-amber-100/70 px-2 py-0.5 rounded-lg truncate">
+                          <Wand2 className="w-3 h-3 text-amber-600 shrink-0" />
+                          <span className="truncate">Memo: {booking.abracadabraNotes}</span>
+                        </div>
+                      )}
                     </div>
                   </div>
 
+                  {/* Quick Tabs: Note Abracadabra & Wazzap Compleanno */}
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setExpandedNotesId(expandedNotesId === booking.id ? null : booking.id!);
+                        if (expandedChatId === booking.id) setExpandedChatId(null);
+                      }}
+                      className={cn(
+                        "flex-1 py-2 px-3 rounded-xl text-xs font-black flex items-center justify-center gap-1.5 transition-all border",
+                        expandedNotesId === booking.id
+                          ? "bg-amber-400 text-purple-950 border-amber-500 shadow-sm"
+                          : booking.abracadabraNotes
+                            ? "bg-amber-50 text-amber-900 border-amber-200 hover:bg-amber-100"
+                            : "bg-white text-gray-700 border-gray-200 hover:border-amber-300"
+                      )}
+                    >
+                      <Wand2 className="w-3.5 h-3.5 text-amber-600" />
+                      <span>Note Abracadabra</span>
+                      {booking.abracadabraNotes && (
+                        <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
+                      )}
+                      {expandedNotesId === booking.id ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setExpandedChatId(expandedChatId === booking.id ? null : booking.id!);
+                        if (expandedNotesId === booking.id) setExpandedNotesId(null);
+                      }}
+                      className={cn(
+                        "flex-1 py-2 px-3 rounded-xl text-xs font-black flex items-center justify-center gap-1.5 transition-all border",
+                        expandedChatId === booking.id
+                          ? "bg-emerald-600 text-white border-emerald-700 shadow-sm"
+                          : "bg-emerald-50 text-emerald-900 border-emerald-200 hover:bg-emerald-100"
+                      )}
+                    >
+                      <MessageSquare className="w-3.5 h-3.5 text-emerald-600" />
+                      <span>Wazzap Compleanno</span>
+                      {expandedChatId === booking.id ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                    </button>
+                  </div>
+
+                  {/* Expanded Abracadabra Notes Section */}
+                  <AnimatePresence>
+                    {expandedNotesId === booking.id && (
+                      <motion.div
+                        initial={{ opacity: 0, height: 0 }}
+                        animate={{ opacity: 1, height: 'auto' }}
+                        exit={{ opacity: 0, height: 0 }}
+                        className="mt-3 overflow-hidden"
+                      >
+                        <AbracadabraNotesBox booking={booking} />
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+
+                  {/* Expanded Birthday WhatsApp Chat Section */}
+                  <AnimatePresence>
+                    {expandedChatId === booking.id && (
+                      <motion.div
+                        initial={{ opacity: 0, height: 0 }}
+                        animate={{ opacity: 1, height: 'auto' }}
+                        exit={{ opacity: 0, height: 0 }}
+                        className="mt-3 overflow-hidden"
+                      >
+                        <BirthdayWhatsAppChat booking={booking} parentPhone={parentPhone} />
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+
                   {/* Actions Footer */}
-                  <div className="mt-4 pt-3 flex items-center justify-between gap-3">
+                  <div className="mt-4 pt-3 border-t border-gray-100 flex items-center justify-between gap-3">
                     {/* Confirm / Toggle Button */}
                     <button
                       onClick={() => handleToggleStatus(booking)}

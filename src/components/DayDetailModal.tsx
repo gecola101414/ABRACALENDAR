@@ -3,7 +3,8 @@ import { format } from 'date-fns';
 import { it } from 'date-fns/locale';
 import { 
   X, CheckCircle2, AlertCircle, Phone, Baby, Calendar as CalIcon, 
-  Clock, Wand2, FileText, Info, Sparkles, Trash2, MessageCircle, ShieldCheck
+  Clock, Wand2, FileText, Info, Sparkles, Trash2, MessageCircle, ShieldCheck,
+  ExternalLink
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ROOMS, SLOTS, Booking, Slot, Room, ROOM_COLORS, SLOT_LABELS } from '../types';
@@ -12,6 +13,9 @@ import { doc, writeBatch, serverTimestamp, collection, getDocs, updateDoc, delet
 import { useAuth } from '../lib/AuthContext';
 import { cn } from '../lib/utils';
 import { BirthdayCakeSymbol } from './BirthdayCakeSymbol';
+import { BirthdayWhatsAppChat } from './BirthdayWhatsAppChat';
+import { AbracadabraNotesBox } from './AbracadabraNotesBox';
+import { getBirthdayWhatsAppUrl } from '../lib/whatsapp';
 import { ErrorBoundary } from './ErrorBoundary';
 
 interface DayDetailModalProps {
@@ -37,6 +41,10 @@ const DayDetailModalInner: React.FC<DayDetailModalProps> = ({
   const [actionLoading, setActionLoading] = useState(false);
   const [contactDetails, setContactDetails] = useState<Record<string, { parentPhone: string }>>({});
 
+  const [editingPhone, setEditingPhone] = useState(false);
+  const [newPhoneInput, setNewPhoneInput] = useState('');
+  const [isSavingPhone, setIsSavingPhone] = useState(false);
+
   const dateStr = format(date, 'yyyy-MM-dd');
 
   // Find booking for the currently selected slot or active booking
@@ -47,21 +55,27 @@ const DayDetailModalInner: React.FC<DayDetailModalProps> = ({
 
   const fetchContacts = async () => {
     const contactsMap: Record<string, { parentPhone: string }> = {};
-    const relevantBookings = bookings.filter(b => b.date === dateStr);
     
-    for (const booking of relevantBookings) {
-      const isOwner = booking.ownerUid === ownerId;
-      if (isAdmin || (isOwner && user) || isOwner) {
-        if (booking.id) {
-          try {
-            const contactSnap = await getDocs(collection(db, 'bookings', booking.id, 'contacts'));
-            contactSnap.forEach(cDoc => {
-              contactsMap[booking.id!] = cDoc.data() as { parentPhone: string };
-            });
-          } catch (e) {
-            // Safe fallback
+    // Check all bookings present in the day or matching selected booking
+    for (const booking of bookings) {
+      if (!booking.id) continue;
+      
+      // If already stored in booking document
+      if (booking.parentPhone) {
+        contactsMap[booking.id] = { parentPhone: booking.parentPhone };
+      }
+
+      // Also try fetching from contacts subcollection
+      try {
+        const contactSnap = await getDocs(collection(db, 'bookings', booking.id, 'contacts'));
+        contactSnap.forEach(cDoc => {
+          const data = cDoc.data() as { parentPhone?: string };
+          if (data?.parentPhone) {
+            contactsMap[booking.id!] = { parentPhone: data.parentPhone };
           }
-        }
+        });
+      } catch (e) {
+        // Safe fallback
       }
     }
     setContactDetails(contactsMap);
@@ -69,7 +83,7 @@ const DayDetailModalInner: React.FC<DayDetailModalProps> = ({
 
   useEffect(() => {
     fetchContacts();
-  }, [bookings, user, isAdmin, ownerId]);
+  }, [bookings, user, isAdmin, ownerId, currentSlotBooking?.id]);
 
   const handleBook = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -82,32 +96,69 @@ const DayDetailModalInner: React.FC<DayDetailModalProps> = ({
       const bookingRef = doc(db, 'bookings', bookingId);
       const contactRef = doc(db, 'bookings', bookingId, 'contacts', 'info');
 
+      const cleanPhone = formData.parentPhone.trim();
+
       const publicData = {
-        childName: formData.childName,
+        childName: formData.childName.trim(),
         childAge: Number(formData.childAge),
         room: selectedSlot.room,
         slot: selectedSlot.slot,
         date: dateStr,
-        notes: formData.notes,
+        notes: formData.notes.trim(),
+        parentPhone: cleanPhone, // Saved directly on booking document
         ownerUid: ownerId,
         createdAt: serverTimestamp(),
         status: isAdmin ? 'confirmed' : 'pending' // Admin auto-confirms if creating
       };
 
       const privateData = {
-        parentPhone: formData.parentPhone
+        parentPhone: cleanPhone
       };
 
       batch.set(bookingRef, publicData);
       batch.set(contactRef, privateData);
 
       await batch.commit();
+
+      // Immediately register in local contact cache
+      setContactDetails(prev => ({
+        ...prev,
+        [bookingId]: { parentPhone: cleanPhone }
+      }));
+
       onClose();
     } catch (error) {
       console.error("Booking error:", error);
       alert("Errore durante la prenotazione. Riprova.");
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  const handleUpdateParentPhone = async () => {
+    if (!currentSlotBooking?.id || !newPhoneInput.trim() || isSavingPhone) return;
+    setIsSavingPhone(true);
+    try {
+      const cleanPhone = newPhoneInput.trim();
+      const batch = writeBatch(db);
+      const bRef = doc(db, 'bookings', currentSlotBooking.id);
+      const cRef = doc(db, 'bookings', currentSlotBooking.id, 'contacts', 'info');
+
+      batch.update(bRef, { parentPhone: cleanPhone });
+      batch.set(cRef, { parentPhone: cleanPhone }, { merge: true });
+      await batch.commit();
+
+      setContactDetails(prev => ({
+        ...prev,
+        [currentSlotBooking.id!]: { parentPhone: cleanPhone }
+      }));
+      setEditingPhone(false);
+      setNewPhoneInput('');
+    } catch (err) {
+      console.error("Error updating phone:", err);
+      alert("Errore nell'aggiornamento del numero telefonico.");
+    } finally {
+      setIsSavingPhone(false);
     }
   };
 
@@ -142,7 +193,7 @@ const DayDetailModalInner: React.FC<DayDetailModalProps> = ({
     }
   };
 
-  const activeParentPhone = currentSlotBooking?.id ? contactDetails[currentSlotBooking.id]?.parentPhone : '';
+  const activeParentPhone = currentSlotBooking?.parentPhone || (currentSlotBooking?.id ? contactDetails[currentSlotBooking.id]?.parentPhone : '') || '';
 
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center p-3 sm:p-6">
@@ -322,50 +373,122 @@ const DayDetailModalInner: React.FC<DayDetailModalProps> = ({
               </div>
 
               {/* Booking Details Grid */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 my-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 my-6">
                 {/* Contact Phone (for Admin or Owner) */}
-                <div className="p-4 bg-white rounded-2xl border border-purple-100 shadow-sm">
-                  <span className="text-[10px] font-black uppercase text-purple-600 block mb-1">
-                    Recapito Genitore
-                  </span>
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2 text-gray-900 font-black text-base">
-                      <Phone className="w-4 h-4 text-purple-600 shrink-0" />
-                      <span>{activeParentPhone || 'Recapito non inserito / riservato'}</span>
+                <div className="p-4 bg-white rounded-2xl border border-purple-100 shadow-sm flex flex-col justify-between">
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-[10px] font-black uppercase text-purple-600 block">
+                        Recapito Telefonico Genitore
+                      </span>
+                      {isAdmin && !editingPhone && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setNewPhoneInput(activeParentPhone || '');
+                            setEditingPhone(true);
+                          }}
+                          className="text-[10px] font-black text-purple-700 hover:text-purple-900 underline"
+                        >
+                          {activeParentPhone ? 'Modifica numero' : '+ Inserisci numero'}
+                        </button>
+                      )}
                     </div>
 
-                    {activeParentPhone && (
-                      <div className="flex gap-2">
-                        <a
-                          href={`tel:${activeParentPhone}`}
-                          className="p-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl transition-all shadow-sm active:scale-95"
-                          title="Chiama ora"
-                        >
-                          <Phone className="w-4 h-4" />
-                        </a>
-                        <a
-                          href={`https://wa.me/${activeParentPhone.replace(/[^0-9]/g, '')}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="p-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl transition-all shadow-sm active:scale-95"
-                          title="Scrivi su WhatsApp"
-                        >
-                          <MessageCircle className="w-4 h-4" />
-                        </a>
+                    {editingPhone ? (
+                      <div className="mt-2 space-y-2">
+                        <input
+                          type="tel"
+                          value={newPhoneInput}
+                          onChange={(e) => setNewPhoneInput(e.target.value)}
+                          placeholder="Es: 3401234567"
+                          className="w-full px-3 py-2 text-sm font-bold border border-purple-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-purple-500"
+                        />
+                        <div className="flex gap-2">
+                          <button
+                            type="button"
+                            disabled={isSavingPhone || !newPhoneInput.trim()}
+                            onClick={handleUpdateParentPhone}
+                            className="px-3 py-1.5 bg-purple-700 hover:bg-purple-800 text-white rounded-lg text-xs font-black transition-all disabled:opacity-50"
+                          >
+                            {isSavingPhone ? 'Salvataggio...' : 'Salva Numero'}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setEditingPhone(false)}
+                            className="px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-xs font-bold transition-all"
+                          >
+                            Annulla
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-2 text-gray-900 font-black text-lg">
+                        <Phone className="w-5 h-5 text-purple-600 shrink-0" />
+                        <span>{activeParentPhone || <span className="text-gray-400 font-normal italic text-sm">Recapito non presente</span>}</span>
                       </div>
                     )}
                   </div>
+
+                  {activeParentPhone && !editingPhone ? (
+                    <div className="flex flex-wrap items-center gap-2 mt-3 pt-3 border-t border-purple-50">
+                      {/* Direct WhatsApp Web Button */}
+                      <a
+                        href={getBirthdayWhatsAppUrl(
+                          activeParentPhone, 
+                          currentSlotBooking.childName, 
+                          currentSlotBooking.childAge, 
+                          format(date, 'd MMMM yyyy', { locale: it }), 
+                          currentSlotBooking.room, 
+                          SLOT_LABELS[currentSlotBooking.slot]
+                        )}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-[#25D366] hover:bg-[#1ebd59] text-white rounded-xl font-black text-xs transition-all shadow-md hover:shadow-lg active:scale-95"
+                        title="Clicca per aprire WhatsApp Web e messaggiare subito con il cliente"
+                      >
+                        <MessageCircle className="w-4 h-4 fill-white text-[#25D366]" />
+                        <span>Apri WhatsApp Web</span>
+                        <ExternalLink className="w-3 h-3 opacity-80" />
+                      </a>
+
+                      {/* Direct Call Button */}
+                      <a
+                        href={`tel:${activeParentPhone}`}
+                        className="inline-flex items-center gap-1.5 px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold text-xs transition-all shadow-sm active:scale-95"
+                        title="Chiama direttamente al telefono"
+                      >
+                        <Phone className="w-3.5 h-3.5" />
+                        <span>Chiama</span>
+                      </a>
+                    </div>
+                  ) : null}
                 </div>
 
-                {/* Notes */}
-                <div className="p-4 bg-white rounded-2xl border border-purple-100 shadow-sm">
-                  <span className="text-[10px] font-black uppercase text-purple-600 block mb-1">
-                    Note & Richieste Speciali
-                  </span>
-                  <p className="text-xs font-bold text-gray-700">
-                    {currentSlotBooking.notes ? `"${currentSlotBooking.notes}"` : <span className="text-gray-400 italic">Nessuna nota specificata</span>}
-                  </p>
+                {/* Notes from Client */}
+                <div className="p-4 bg-white rounded-2xl border border-purple-100 shadow-sm flex flex-col justify-between">
+                  <div>
+                    <span className="text-[10px] font-black uppercase text-purple-600 block mb-1">
+                      Note Inserite dal Cliente
+                    </span>
+                    <p className="text-xs sm:text-sm font-bold text-gray-700 leading-relaxed">
+                      {currentSlotBooking.notes ? `"${currentSlotBooking.notes}"` : <span className="text-gray-400 italic">Nessuna richiesta speciale dal cliente</span>}
+                    </p>
+                  </div>
                 </div>
+              </div>
+
+              {/* Note di Abracadabra (Note Indelebili di Gestione Interna) */}
+              <div className="mb-6">
+                <AbracadabraNotesBox booking={currentSlotBooking} />
+              </div>
+
+              {/* Piccolo WhatsApp di Compleanno (Chat tra Cliente e Staff) */}
+              <div className="mb-6">
+                <BirthdayWhatsAppChat 
+                  booking={currentSlotBooking} 
+                  parentPhone={activeParentPhone} 
+                />
               </div>
 
               {/* Admin Action Bar */}

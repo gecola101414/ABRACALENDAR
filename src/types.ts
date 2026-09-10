@@ -4,6 +4,15 @@ import { it } from 'date-fns/locale';
 export type Room = 'SALA FATA TURCHINA' | 'SALA FOLLETTO ZURLI' | 'SALA MAGO MERLINO';
 export type Slot = 'MATTINA' | 'POMERIGGIO' | 'SERA';
 
+export interface ChatMessage {
+  id?: string;
+  sender: 'admin' | 'parent';
+  senderName: string;
+  text: string;
+  createdAt: any;
+  timestamp?: number;
+}
+
 export interface Booking {
   id?: string;
   childName: string;
@@ -12,6 +21,8 @@ export interface Booking {
   slot: Slot;
   date: string; // yyyy-MM-dd
   notes?: string;
+  parentPhone?: string;
+  abracadabraNotes?: string; // Note indelebili e speciali dello Staff Abracadabra
   ownerUid?: string;
   createdAt: any;
   status: 'pending' | 'confirmed';

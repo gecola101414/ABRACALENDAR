@@ -2,7 +2,7 @@
   "entities": {
     "Booking": {
       "title": "Booking",
-      "description": "Una prenotazione per una sala compleanno",
+      "description": "Una prenotazione per una sala compleanno con note interne",
       "type": "object",
       "properties": {
         "id": { "type": "string" },
@@ -13,15 +13,33 @@
         "slot": { "type": "string", "enum": ["MATTINA", "POMERIGGIO", "SERA"] },
         "date": { "type": "string", "format": "date" },
         "notes": { "type": "string", "maxLength": 500 },
+        "abracadabraNotes": { "type": "string", "maxLength": 1000 },
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["childName", "childAge", "parentPhone", "room", "slot", "date", "createdAt"]
+    },
+    "ChatMessage": {
+      "title": "ChatMessage",
+      "description": "Messaggio di chat interna stile WhatsApp tra cliente e staff",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "sender": { "type": "string", "enum": ["admin", "parent"] },
+        "senderName": { "type": "string", "maxLength": 50 },
+        "text": { "type": "string", "maxLength": 1000 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["sender", "senderName", "text", "createdAt"]
     }
   },
   "firestore": {
     "/bookings/{bookingId}": {
       "schema": "Booking",
       "description": "Collezione globale delle prenotazioni"
+    },
+    "/bookings/{bookingId}/messages/{messageId}": {
+      "schema": "ChatMessage",
+      "description": "Subcollezione messaggi WhatsApp di compleanno"
     }
   }
 }
